@@ -85,8 +85,7 @@ void serial_write_dec8(uint8_t val) {
 	serial_write1(val % 10 + '0');
 }
 
-void serial_write_dec32(uint32_t val) {
-	serial_write1(' ');
+static void serial_write_dec32_nosp(uint32_t val) {
 	if (val > 999999999)
 		serial_write1(val / 1000000000 + '0');
 	if (val > 99999999)
@@ -106,6 +105,32 @@ void serial_write_dec32(uint32_t val) {
 	if (val > 9)
 		serial_write1((val / 10) % 10 + '0');
 	serial_write1(val % 10 + '0');
+}
+
+void serial_write_dec32(uint32_t val) {
+	serial_write1(' ');
+	serial_write_dec32_nosp(val);
+}
+
+void serial_write_fp32(int32_t val, uint32_t unit) {
+	uint32_t u;
+
+	serial_write1(' ');
+	if (val < 0) {
+		serial_write1('-');
+		val = 0 - val;
+	}
+	/* Let's hope the /'s and %'s get optimised together */
+	serial_write_dec32_nosp(val / unit);
+	val = val % unit;
+
+	if (unit > 1 && val)
+		serial_write1('.');
+	for (u = unit; u > 1 && val; u /= 10) {
+		val *= 10;
+		serial_write1(val / unit + '0');
+		val = val % unit;
+	}
 }
 
 static void (*ch_handler)(char ch) = NULL;
