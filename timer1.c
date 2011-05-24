@@ -33,15 +33,13 @@ static void timer_overflow(void) {
 		last_sec += F_CPU;
 		seconds ++;
 	}
+
+	update_timeouts();
 }
 
 /* Timekeeping */
 ISR(TIMER1_OVF_vect) {
 	timer_overflow();
-
-	sei();
-
-	update_timeouts();
 }
 
 /* Read current time in cpu cycles (way more complex than it should be..) */
@@ -54,14 +52,15 @@ uint32_t timer_read(void) {
 	uint16_t lo, hi, sreg;
 
 	/*
-	 * First make sure no overflow is pending.  This can only happen
+	 * First make sure no overflow is pending.  This should only happen
 	 * with interrupts disabled already..
+	 * ..but for some reason it also happens when they're enabled, is
+	 * that a cpu bug?
 	 */
-	while (TIFR1 & 1) {
+	while ((TIFR1 & 1) && !(SREG & 0x80)) {
 		TIFR1 |= 1;
 
 		timer_overflow();
-		update_timeouts();
 	}
 
 	sreg = SREG;
@@ -121,7 +120,7 @@ void set_timeout(uint32_t when, void (*callback)(void)) {
 	cli();
 
 	for (i = next, j = &next; i != 0xff; j = &timeouts[i].next, i = *j)
-		if (!((uint32_t) (timeouts[i].when - when) >> 31))
+		if ((uint32_t) (when - timeouts[i].when) >> 31)
 			break;
 	for (; timeouts[k].callback; k = (k + 1) & (MAX_TIMEOUTS - 1));
 	timeouts[k].when = when;
@@ -129,24 +128,41 @@ void set_timeout(uint32_t when, void (*callback)(void)) {
 	timeouts[k].next = i;
 	*j = k;
 
-	SREG = sreg;
-
 	if (j == &next)
 		update_timeouts();
+
+	SREG = sreg;
 }
+
+static volatile uint8_t updating = 0;
+static volatile uint8_t updated;
 
 ISR(TIMER1_COMPA_vect) {
-	/*
-	 * This only happens when at least the first timeout has expired,
-	 * but we can't just go on and call back here because we want to
-	 * allow callbacks to schedule new timeouts...
-	 */
-	sei();
+	uint32_t now;
 
-	update_timeouts();
+	TIMSK1 = 0x01;
+
+#if 0
+	updating = 1;
+#endif
+
+	do {
+		void (*cb)(void) = timeouts[next].callback;
+		timeouts[next].callback = NULL;
+		next = timeouts[next].next;
+		updated = 0;
+
+		sei();
+		cb();
+		cli();
+
+		now = timer_read();
+	} while (next != 0xff && (uint32_t) (timeouts[next].when - now) >> 31);
+
+	updating = 0;
+	if (!updated)
+		update_timeouts();
 }
-
-static volatile uint8_t in_update = 0;
 
 /*
  * Another assumption that we make, but which really depends on factors
@@ -155,58 +171,35 @@ static volatile uint8_t in_update = 0;
  * setting the timer compare register to a new value will take less than
  * MIN_DELAY cycles.
  */
-#define MIN_DELAY 40
+#define MIN_DELAY 60
 
+/* Interrupts disabled here */
 static void update_timeouts(void) {
-	uint8_t sreg = SREG;
-	uint32_t now;
+	int16_t diff;
+	uint16_t ocra, tcnt;
 
-	cli();
-
-	if (in_update)
+	if (updating)
 		return;
 
 	TIMSK1 = 0x01;
+	updated = 1;
+	if (next == 0xff)
+		return;
+	diff = (timeouts[next].when >> 16) - timer_cycles;
+	if (diff > 0)
+		return;
 
-	/* Only run the callbacks if the caller has not disabled interrupts */
-	if (!(sreg & 0x80))
-		goto update_reg;
-
-	in_update = 1;
-
-	while (next != 0xff) {
-		void (*cb)(void);
-
-		now = timer_read();
-		if (!((uint32_t) (timeouts[next].when - now) >> 31))
-			break;
-
-		cb = timeouts[next].callback;
-		timeouts[next].callback = NULL;
-		next = timeouts[next].next;
-
-		sei();
-		cb();
-		cli();
-	}
-
-	in_update = 0;
-
-update_reg:
-	if (next != 0xff && timer_cycles == (timeouts[next].when >> 16)) {
-		/*
-		 * If the desired value is in the past or very close to now,
-		 * we make it now + MIN_DELAY cycles to avoid any race
-		 * conditions.  The hope is that this function will not take
-		 * longer than MIN_DELAY cycles.
-		 */
-		uint16_t ocra = timeouts[next].when;
-		if (TCNT1 - ocra > MIN_DELAY)
-			OCR1A = ocra;
-		else
-			OCR1A = TCNT1 + MIN_DELAY;
-		TIMSK1 = 0x03;
-	}
-
-	SREG = sreg;
+	/*
+	 * If the desired value is in the past or very close to now,
+	 * we make it now + MIN_DELAY cycles to avoid any race
+	 * conditions.  The hope is that this function will not take
+	 * longer than MIN_DELAY cycles.
+	 */
+	ocra = timeouts[next].when;
+	tcnt = TCNT1;
+	if (diff || ocra < MIN_DELAY || ocra - MIN_DELAY < tcnt)
+		ocra = tcnt + MIN_DELAY;
+	OCR1A = ocra;
+	TIFR1 |= 0x02; /* Why is this needed? CPU bug? */
+	TIMSK1 = 0x03;
 }
