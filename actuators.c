@@ -8,8 +8,8 @@
 #include "timer1.h"
 
 static void pin_mode(uint8_t pin, uint8_t mode) {
-	uint8_t bit = digitalPinToBitMask(pin + 2);
-	volatile uint8_t *reg = portModeRegister(digitalPinToPort(pin + 2));
+	uint8_t bit = digitalPinToBitMask(pin + 3);
+	volatile uint8_t *reg = portModeRegister(digitalPinToPort(pin + 3));
 
 	if (mode)
 		*reg |= bit;
@@ -18,8 +18,8 @@ static void pin_mode(uint8_t pin, uint8_t mode) {
 }
 
 static void pin_set(uint8_t pin, uint8_t val) {
-	uint8_t bit = digitalPinToBitMask(pin + 2);
-	volatile uint8_t *reg = portOutputRegister(digitalPinToPort(pin + 2));
+	uint8_t bit = digitalPinToBitMask(pin + 3);
+	volatile uint8_t *reg = portOutputRegister(digitalPinToPort(pin + 3));
 
 	if (val)
 		*reg |= bit;
