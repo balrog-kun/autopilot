@@ -69,7 +69,14 @@ ISR(PCINT0_vect) {
 	 * the previous edge.
 	 */
 
-	if ((uint32_t) (now - rx_up) > F_CPU / 400) {
+	if ((uint32_t) (now - rx_up) > F_CPU / 400)
+		rx_chnum = 0;
+	else if ((uint32_t) (now - rx_up) < F_CPU / 2000)
+		return;
+	else {
+		/* XXX: should use F_CPU below */
+		rx_ch[rx_chnum ++] = now - rx_up - F_CPU / 1050;
+
 		/* Un-mix the channels.  The ET6I trasmitter is made
 		 * specifically for helicopters and mixes the channels on
 		 * the tx side to produce signals for: the motor, the 4
@@ -86,25 +93,22 @@ ISR(PCINT0_vect) {
 		 * for the left-right / front-back nick values we should
 		 * compare th three servo angles.
 		 */
-		uint16_t up_raw = rx_ch[2] >= ((256 + 31) << 6) ? 
-			((256 + 31) << 6) - 1 : rx_ch[2];
-		uint16_t back_raw = rx_ch[1] -
-			(rx_ch[2] >> 2) - (rx_ch[2] >> 4);
-		uint16_t left_raw = rx_ch[0] + (back_raw >> 1) -
-			(rx_ch[2] >> 2) - (rx_ch[2] >> 4);
+		if (rx_chnum == 4) {
+			uint16_t up_raw = rx_ch[2] >= ((256 + 31) << 6) ?
+				((256 + 31) << 6) - 1 : rx_ch[2];
+			uint16_t back_raw = rx_ch[1] -
+				(rx_ch[2] >> 2) - (rx_ch[2] >> 4);
+			uint16_t left_raw = rx_ch[0] + (back_raw >> 1) -
+				(rx_ch[2] >> 2) - (rx_ch[2] >> 4);
 
-		rx_co_throttle = (up_raw >> 6) - 31;
-		rx_co_right = (rx_ch[3] >> 6) - 10;
-		rx_cy_front = ((~back_raw) >> 6) - 4;
-		rx_cy_right = ((~left_raw) >> 6) + 66;
+			rx_co_throttle = (up_raw >> 6) - 31;
+			rx_co_right = (rx_ch[3] >> 6) - 10;
+			rx_cy_front = ((~back_raw) >> 6) - 4;
+			rx_cy_right = ((~left_raw) >> 6) + 66;
 
-		rx_chnum = 0;
-		rx_no_signal = 0;
-	} else if ((uint32_t) (now - rx_up) > F_CPU / 2000)
-		/* XXX: should use F_CPU below */
-		rx_ch[rx_chnum ++] = now - rx_up - F_CPU / 1050;
-	else
-		return;
+			rx_no_signal = 0;
+		}
+	}
 
 	rx_up = now;
 }
