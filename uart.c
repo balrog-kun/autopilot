@@ -5,6 +5,8 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 
+#include "timer1.h"
+
 #ifndef NULL
 # define NULL 0
 #endif
@@ -124,9 +126,9 @@ void serial_write_fp32(int32_t val, uint32_t unit) {
 	serial_write_dec32_nosp(val / unit);
 	val = val % unit;
 
-	if (unit > 1 && val)
+	if (unit > 1 && likely(val))
 		serial_write1('.');
-	for (u = unit; u > 1 && val; u /= 10) {
+	for (u = unit; u > 1 && likely(val); u /= 10) {
 		val *= 10;
 		serial_write1(val / unit + '0');
 		val = val % unit;
@@ -143,6 +145,6 @@ ISR(USART_RX_vect) {
 	uint8_t status = UCSR0A;
 	uint8_t ch = UDR0;
 
-	if (!(status & 0x14) && ch_handler)
+	if (!unlikely(status & 0x14) && ch_handler)
 		ch_handler(ch);
 }

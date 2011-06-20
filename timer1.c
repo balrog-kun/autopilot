@@ -6,6 +6,8 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 
+#include "timer1.h"
+
 #ifndef NULL
 # define NULL 0
 #endif
@@ -29,7 +31,7 @@ static void timer_overflow(void) {
 	timer_cycles ++;
 
 	new_val = (uint32_t) timer_cycles << 16;
-	if (new_val >= last_sec + F_CPU || new_val < last_sec) {
+	if (new_val >= last_sec + F_CPU || unlikely(new_val < last_sec)) {
 		last_sec += F_CPU;
 		seconds ++;
 	}
@@ -57,7 +59,7 @@ uint32_t timer_read(void) {
 	 * ..but for some reason it also happens when they're enabled, is
 	 * that a cpu bug?
 	 */
-	while ((TIFR1 & 1) && !(SREG & 0x80)) {
+	while (unlikely((TIFR1 & 1) && !(SREG & 0x80))) {
 		TIFR1 |= 1;
 
 		timer_overflow();
@@ -74,7 +76,7 @@ uint32_t timer_read(void) {
 	 * before the overflow, while lo contains the value from after it
 	 * which is the only "interesting" scenario.  Compensate for that.
 	 */
-	if ((TIFR1 & 1) && lo < 0x8000)
+	if (unlikely((TIFR1 & 1) && lo < 0x8000))
 		hi ++;
 
 	SREG = sreg;
@@ -178,7 +180,7 @@ static void update_timeouts(void) {
 	int16_t diff;
 	uint16_t ocra, tcnt;
 
-	if (updating)
+	if (unlikely(updating))
 		return;
 
 	TIMSK1 = 0x01;
@@ -197,7 +199,8 @@ static void update_timeouts(void) {
 	 */
 	ocra = timeouts[next].when;
 	tcnt = TCNT1;
-	if (diff || ocra < MIN_DELAY || ocra - MIN_DELAY < tcnt)
+	if (unlikely(diff || unlikely(ocra < MIN_DELAY ||
+					ocra - MIN_DELAY < tcnt)))
 		ocra = tcnt + MIN_DELAY;
 	OCR1A = ocra;
 	TIFR1 |= 0x02; /* Why is this needed? CPU bug? */
