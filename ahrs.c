@@ -277,6 +277,9 @@ void ahrs_init(void) {
 	staticm[0] = (avgm[0] + ((1 << (REF_RES - 3)) - 1)) >> (REF_RES - 3);
 	staticm[1] = (avgm[1] + ((1 << (REF_RES - 3)) - 1)) >> (REF_RES - 3);
 	staticm[2] = (avgm[2] + ((1 << (REF_RES - 3)) - 1)) >> (REF_RES - 3);
+	staticm[0] -= cmps09_mag_calib[0];
+	staticm[1] -= cmps09_mag_calib[1];
+	staticm[2] -= cmps09_mag_calib[2];
 
 	ahrs_pitch = ahrs_roll = ahrs_yaw = 0;
 	rel_pitch = rel_roll = 0;
