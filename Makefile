@@ -2,7 +2,7 @@ PORT = /dev/ttyUSB0
 ARDUINO = /usr/share/arduino-0017/hardware/cores/arduino
 TARGET = pilot
 SRC = $(ARDUINO)/pins_arduino.c $(TARGET).c uart.c adc.c timer1.c actuators.c \
-      rx.c twi.c ahrs.c
+      rx.c twi.c ahrs.c trig.c
 ASRC = isqrt.S
 MCU = atmega328p
 F_CPU = 16000000

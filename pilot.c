@@ -11,6 +11,7 @@
 #include "actuators.h"
 #include "rx.h"
 #include "twi.h"
+#include "cmps09.h"
 #include "ahrs.h"
 #include "isqrt.h"
 
@@ -60,14 +61,6 @@ static void handle_input(char ch) {
 	show_state();
 }
 
-#define CMPS09_ADDR 0x60
-
-static void cmps09_read_bytes(uint8_t from, uint8_t count, uint8_t *out) {
-	i2c_send_byte(CMPS09_ADDR, from); /* Send start register number */
-
-	i2c_request_bytes(CMPS09_ADDR, count, out);
-}
-
 void nop(void) {}
 void die(void) {
 	cli();
@@ -78,7 +71,7 @@ void die(void) {
 void setup(void) {
 	uint8_t s = SREG;
 	uint8_t m = MCUCR;
-	uint8_t ver, cnt, regs[12];
+	uint8_t ver, cnt, regs[6];
 	int16_t v;
 	uint32_t len;
 
@@ -146,12 +139,12 @@ void setup(void) {
 	serial_write_eol();
 
 	serial_write_str("Checking magnetic field magnitude.. ");
-	cmps09_read_bytes(10, 12, regs);
-	v = ((uint16_t) regs[0] << 8) | regs[1];
+	cmps09_read_bytes(10, 6, regs);
+	v = (((uint16_t) regs[0] << 8) | regs[1]) - cmps09_mag_calib[0];
 	len = (int32_t) v * v;
-	v = ((uint16_t) regs[2] << 8) | regs[3];
+	v = (((uint16_t) regs[2] << 8) | regs[3]) - cmps09_mag_calib[1];
 	len += (int32_t) v * v;
-	v = ((uint16_t) regs[4] << 8) | regs[5];
+	v = (((uint16_t) regs[4] << 8) | regs[5]) - cmps09_mag_calib[2];
 	len += (int32_t) v * v;
 	len = isqrt32(len);
 	serial_write_fp32(len, 1000);
@@ -161,18 +154,23 @@ void setup(void) {
 		die();
 
 	serial_write_str("Checking accelerometer readings.. ");
-	v = ((uint16_t) regs[6] << 8) | regs[7];
-	len = (int32_t) v * v;
-	v = ((uint16_t) regs[8] << 8) | regs[9];
-	len += (int32_t) v * v;
-	v = ((uint16_t) regs[10] << 8) | regs[11];
-	len += (int32_t) v * v;
-	len = isqrt32(len);
-	/* TODO: the scale seems to change with temperature? */
+	v = 0;
+	for (cnt = 0; cnt < 16; cnt ++) {
+		cmps09_read_bytes(16, 6, regs);
+		v = ((int16_t) (((uint16_t) regs[0] << 8) | regs[1]) + 1) >> 1;
+		len += (int32_t) v * v;
+		v = ((int16_t) (((uint16_t) regs[2] << 8) | regs[3]) + 1) >> 1;
+		len += (int32_t) v * v;
+		v = ((int16_t) (((uint16_t) regs[4] << 8) | regs[5]) + 1) >> 1;
+		len += (int32_t) v * v;
+		my_delay(20);
+	}
+	len = (isqrt32(len) + 1) >> 1;
+	/* TODO: the scale seems to change a lot with temperature? */
 	serial_write_fp32(len, 0x4050);
 	serial_write_str(" g");
 	serial_write_eol();
-	if (len > 0x4070 || len < 0x4000)
+	if (len > 0x4070 || len < 0x3fe0)
 		die();
 
 	serial_write_str("Receiver signal: ");

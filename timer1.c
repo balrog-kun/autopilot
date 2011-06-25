@@ -96,7 +96,7 @@ void my_delay(uint16_t msecs) {
  * accurate, but there are no guarantees.  The callback may happen a
  * little later than expected, but not sooner than expected.  This is
  * guaranteed, but the "little later" can be rather long in extreme
- * cases.  It will be reasonably short if callback routines are reasonable
+ * cases.  It will be reasonably short if callback routines are reasonably
  * short.  Timeouts being set need to be within 2^32 / F_CPU / 2 seconds
  * from now, which is about 120 seconds at 16MHz.
  *
