@@ -7,7 +7,7 @@
 #endif
 
 #ifndef TWI_BUFFER_LENGTH
-# define TWI_BUFFER_LENGTH 8
+# define TWI_BUFFER_LENGTH 12
 #endif
 
 #define TWI_READY	0
