@@ -9,6 +9,10 @@
 #include "timer1.h"
 #include "uart.h"
 #include "actuators.h"
+#include "rx.h"
+#include "twi.h"
+#include "ahrs.h"
+#include "isqrt.h"
 
 static uint8_t motor[4] = { 0, 0, 0, 0 };
 
@@ -56,16 +60,41 @@ static void handle_input(char ch) {
 	show_state();
 }
 
+#define CMPS09_ADDR 0x60
+
+static void cmps09_read_bytes(uint8_t from, uint8_t count, uint8_t *out) {
+	i2c_send_byte(CMPS09_ADDR, from); /* Send start register number */
+
+	i2c_request_bytes(CMPS09_ADDR, count, out);
+}
+
+void nop(void) {}
+void die(void) {
+	cli();
+	serial_write_str("ERROR");
+	while (1);
+}
+
 void setup(void) {
 	uint8_t s = SREG;
 	uint8_t m = MCUCR;
+	uint8_t ver, cnt, regs[12];
+	int16_t v;
+	uint32_t len;
 
+	/* Initialise everything we need */
 	serial_init();
 	adc_init();
 	timer_init();
-	sei();
 	actuators_init(4);
 	serial_set_handler(handle_input);
+	rx_init();
+	twi_init();
+	sei();
+
+	adc_convert_all(nop);
+
+	rx_no_signal = 10;
 
 	/* Wait for someone to attach to UART */
 	my_delay(4000);
@@ -76,16 +105,102 @@ void setup(void) {
 	serial_write_hex16(m);
 	serial_write_eol();
 
-	/* Wait for the ESCs to detect voltages etc. */
-	my_delay(4000);
+	/* Perform all the status sanity checks */
+
+	serial_write_str("Battery voltage:");
+	/* Reference volatage is 3.3V & resistors divide input voltage by ~5 */
+	serial_write_fp32((uint32_t) adc_values[3] * 323 * (991 + 241),
+			0x400L * 100 * 241);
+	serial_write1('V');
+	serial_write_eol();
+	/* TODO: check that li-poly voltage is not below 3.2V per cell
+	 * (unless Li-Po-Fe) */
+
+	serial_write_str("CPU temperature:");
+	/* Reference volatage is 1.1V now */
+	serial_write_fp32((adc_values[4] - 269) * 1100, 0x400);
+	serial_write_eol();
+
+	ver = 0xff;
+	cmps09_read_bytes(0, 1, &ver);
+	serial_write_str("Magnetometer revision:");
+	serial_write_hex16(ver);
+	serial_write_eol();
+	if (ver != 0x02)
+		die();
+
+	serial_write_str("Checking if gyro readings in range.. ");
+	/* 1.23V expected -> 2 * 0x400 * 1.23V / 3.3V == 0x2fb */
+	cnt = 0;
+	while (adc_values[0] > 0x2a0 && adc_values[0] < 0x350 &&
+			adc_values[1] > 0x2a0 && adc_values[1] < 0x350 &&
+			adc_values[2] > 0x2a0 && adc_values[2] < 0x350 &&
+			cnt ++ < 20) {
+		adc_values[0] = 2 * adc_convert(0);
+		adc_values[1] = 2 * adc_convert(1);
+		adc_values[2] = 2 * adc_convert(2);
+	}
+	if (cnt < 21)
+		die();
+	serial_write_str("yep");
+	serial_write_eol();
+
+	serial_write_str("Checking magnetic field magnitude.. ");
+	cmps09_read_bytes(10, 12, regs);
+	v = ((uint16_t) regs[0] << 8) | regs[1];
+	len = (int32_t) v * v;
+	v = ((uint16_t) regs[2] << 8) | regs[3];
+	len += (int32_t) v * v;
+	v = ((uint16_t) regs[4] << 8) | regs[5];
+	len += (int32_t) v * v;
+	len = isqrt32(len);
+	serial_write_fp32(len, 1000);
+	serial_write_str(" T");
+	serial_write_eol();
+	if (len > 600 || len < 300)
+		die();
+
+	serial_write_str("Checking accelerometer readings.. ");
+	v = ((uint16_t) regs[6] << 8) | regs[7];
+	len = (int32_t) v * v;
+	v = ((uint16_t) regs[8] << 8) | regs[9];
+	len += (int32_t) v * v;
+	v = ((uint16_t) regs[10] << 8) | regs[11];
+	len += (int32_t) v * v;
+	len = isqrt32(len);
+	/* TODO: the scale seems to change with temperature? */
+	serial_write_fp32(len, 0x4050);
+	serial_write_str(" g");
+	serial_write_eol();
+	if (len > 0x4070 || len < 0x4000)
+		die();
+
+	serial_write_str("Receiver signal: ");
+	serial_write_str(rx_no_signal ? "NOPE" : "yep");
+	serial_write_eol();
+	if (!rx_no_signal && rx_co_throttle > 5) {
+		serial_write_str("Throttle stick is not in the bottom "
+				"position\r\n");
+		die();
+	}
+
+	serial_write_str("Calibrating sensors..\r\n");
+
+	/* Start the software clever bits */
+	ahrs_init();
 	actuators_start();
+
+	serial_write_str("AHRS loop and actuator signals are running\r\n");
 
 	show_state();
 }
 
 void loop(void) {
-	my_delay(100);
-	/*serial_write1('.');*/
+	my_delay(200);
+	serial_write_fp32(ahrs_pitch, ROLL_PITCH_180DEG / 180);
+	serial_write_fp32(ahrs_roll, ROLL_PITCH_180DEG / 180);
+	serial_write_fp32((int32_t) ahrs_yaw * 180, 32768);
+	serial_write_eol();
 }
 
 int main(void) {
