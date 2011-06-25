@@ -1,0 +1,48 @@
+This project contains the autopilot and on-board computer firmware
+code for a quad- / tri- / dual copter I'm making mainly for aerial
+photography for OpenStreetMap.  The flight computer is based on
+an Arduino Duemilanove board with several sensors (see below) but
+the code is mostly generic.  The most tricky part is definitely the
+AHRS maths which is very platform independent.
+
+There are other projects that implement an Arduino-based or AVR-based
+autopilot, namely there are at least these: Ardupilot/Arducopter,
+Openpilot, mikrokopter.de and to some extent the kkmulticopter
+firmware.  Arducopter/Ardupilot and Openpilot implement the real
+thing: a kalman filter in floating point with matrices and/or
+quaternions.  This is a bit of overkill for a real-time process on
+an Atmega processor.  microcopter.de is quite cool but code is a
+little chaotic, in German, and not freely-licensed.  It's also
+very much adapted to a single hardware platform.  All these projects
+also have mainly ms Windows support for the ground station code and
+only some partial or unofficial/unsupported unix/linux code.
+kkmulticopter, while it has a really simple and fast code, is too
+simplified and uses mainly only a very precise gyro, while my
+platform can make use of other sensors, but its gyros are far from
+perfect.
+
+The hardware was selected to use the cheapest usable parts to make
+the whole project easily reproducible.
+
+The current hardware confiuration in my device looks something like:
+
+ ,-------.
+ |Arduino| >--- 3.3V ---...
+ |  Due  |
+ | -mila |   5V DC in from uBEC to Vcc
+ | -nove | <--- 1x --,                     ,-----------< 11V battery
+ | ,-----|            >-- 4x --- 4x 30A ESC
+ | |     | >--- 4x --'                     '-- 4x -----> 4x brushless motor
+ | |  A  |   4x PPM signal from digital OUT
+ | |  t  |
+ | |  M  | <----- Analog -----< LPR530AL 2-axis gyro <------ 3.3V ---..
+ | |  e  |
+ | |  g  | <----- I^2C -------< CMPS09 3-axis Mag&Accel <--- 3.3V ---..
+ | |  a  |
+ | |  3  | <--- PPM @ 4x or 1x digital IN ---< E-sky stock radio rx <-- 5V --..
+ | |  2  |
+ | |  8  | <--- UART ---< LS20126 GPS <-- 5V ---..
+ | |  p  | <--- UART ---> Xbee Pro modem @ 868 MHz <--- 5V ---..
+ | |     |
+ `-^-----' >--- UART ---> onboard FT232 <--- USB ---> PC
+   <------------ 5V DC in -----'
