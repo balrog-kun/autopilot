@@ -1,5 +1,7 @@
 /*
  * Generates signal that drives RC actuators (motors and servos).
+ *
+ * Licensed under AGPLv3.
  */
 
 #include <avr/io.h>

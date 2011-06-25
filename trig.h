@@ -1,5 +1,7 @@
 /*
  * Fixed point sine & cosine and related stuff.
+ *
+ * Licensed under AGPLv3.
  */
 
 int16_t sin_16_bhaskara(int16_t angle);

@@ -1,5 +1,7 @@
 /*
  * 16-bit timer 1 used for timekeeping as well as arbitrary timeouts.
+ *
+ * Licensed under AGPLv3.
  */
 
 void timer_init(void);

@@ -1,5 +1,7 @@
 /*
  * CMPS09 magnetometer + accelerometer board driver.
+ *
+ * Licensed under AGPLv3.
  */
 
 #define CMPS09_ADDR 0x60

@@ -1,5 +1,7 @@
 /*
  * Serial.
+ *
+ * Licensed under AGPLv3.
  */
 
 void serial_init(void);

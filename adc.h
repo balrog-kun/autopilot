@@ -1,5 +1,7 @@
 /*
  * ADC.
+ *
+ * Licensed under AGPLv3.
  */
 
 void adc_init(void);

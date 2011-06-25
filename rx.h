@@ -1,5 +1,7 @@
 /*
  * E-sky Hobby ET6I tx and rx.
+ *
+ * Licensed under AGPLv3.
  */
 
 void rx_init(void);

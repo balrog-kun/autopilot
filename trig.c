@@ -1,5 +1,7 @@
 /*
  * Fixed point sine & cosine.
+ *
+ * Licensed under AGPLv3.
  */
 
 #include <avr/pgmspace.h>

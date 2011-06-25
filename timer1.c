@@ -1,6 +1,8 @@
 /*
  * 16-bit timer 1 used for timekeeping as well as arbitrary timeouts.
  * Complex stuff.
+ *
+ * Licensed under AGPLv3.
  */
 
 #include <avr/io.h>

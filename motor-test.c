@@ -1,5 +1,7 @@
 /*
  * A simple Arduino Duemilanove-based quadcopter autopilot.
+ *
+ * Licensed under AGPLv3.
  */
 
 #include <avr/io.h>

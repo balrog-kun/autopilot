@@ -1,6 +1,8 @@
 /*
  * A simple fixed-point AHRS based on intertial and magentic sensors.
  *
+ * Licensed under AGPLv3.
+ *
  * This is probably the "heart" of the autopilot.
  *
  * This currently uses an "8-DoF" set of sensors: a 2-axis gyro and a 3-axis

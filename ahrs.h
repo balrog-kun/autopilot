@@ -1,5 +1,7 @@
 /*
  * A simple fixed-point AHRS based on intertial and magentic sensors.
+ *
+ * Licensed under AGPLv3.
  */
 
 void ahrs_init(void);
