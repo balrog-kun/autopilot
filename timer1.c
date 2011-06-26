@@ -21,12 +21,14 @@ void timer_init(void) {
 static volatile uint16_t timer_cycles = 0;
 static uint32_t last_sec = 0;
 static uint32_t seconds = 0;
+static volatile uint8_t overflow_occured = 0;
 
 static void update_timeouts(void);
 
 /* Always called with interrupts disabled */
 static void timer_overflow(void) {
 	uint32_t new_val;
+        overflow_occured = 1;
 
 	timer_cycles ++;
 
@@ -44,43 +46,23 @@ ISR(TIMER1_OVF_vect) {
 	timer_overflow();
 }
 
-/* Read current time in cpu cycles (way more complex than it should be..) */
+/* Read current time in cpu cycles (simple and safe if interrupt handlers are mutually data-independent) */
 uint32_t timer_read(void) {
 	/*
 	 * The simple, but not 100% race safe version, not even in interrupt
 	 * context, is:
 	 * return TCNT1 | ((uint32_t) timer_cycles << 16);
 	 */
-	uint16_t lo, hi, sreg;
-
-	/*
-	 * First make sure no overflow is pending.  This should only happen
-	 * with interrupts disabled already..
-	 * ..but for some reason it also happens when they're enabled, is
-	 * that a cpu bug?
-	 */
-	while (unlikely((TIFR1 & 1) && !(SREG & 0x80))) {
-		TIFR1 |= 1;
-
-		timer_overflow();
-	}
-
-	sreg = SREG;
-	cli();
-
-	lo = TCNT1, hi = timer_cycles;
-	/*
-	 * If an overflow is now pending (must have happened after the cli)
-	 * and lo is low, meaning that only a few cycles had happened since
-	 * the last overflow, then we assume that hi contains the value from
-	 * before the overflow, while lo contains the value from after it
-	 * which is the only "interesting" scenario.  Compensate for that.
-	 */
-	if (unlikely((TIFR1 & 1) && lo < 0x8000))
-		hi ++;
-
-	SREG = sreg;
-	return ((uint32_t) hi << 16) | lo;
+        uint32_t ret;
+        do {
+            overflow_occured = 0;
+            sei();
+            // if any number of interrpts is pending, let them in. overflow included
+            ret = TCNT1 | ((uint32_t) timer_cycles << 16);
+            cli();
+        }
+        while (overflow_occured);
+	return ret;
 }
 
 /* Burn some cycles */
