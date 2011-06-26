@@ -137,14 +137,14 @@ static void vectors_update(void) {
 	/* Retrieve current values of everything */
 
 	cmps09_read_bytes(10, 12, regs); /* TODO: be async */
-	m[0] = ((uint16_t) regs[0] << 8) | regs[1];
-	m[1] = ((uint16_t) regs[2] << 8) | regs[3];
+	m[1] = ((uint16_t) regs[0] << 8) | regs[1];
+	m[0] = ((uint16_t) regs[2] << 8) | regs[3];
 	m[2] = ((uint16_t) regs[4] << 8) | regs[5];
 	a[0] = ((uint16_t) regs[6] << 8) | regs[7];
 	a[1] = ((uint16_t) regs[8] << 8) | regs[9];
 	a[2] = ((uint16_t) regs[10] << 8) | regs[11];
-	m[0] -= cmps09_mag_calib[0];
-	m[1] -= cmps09_mag_calib[1];
+	m[1] -= cmps09_mag_calib[0];
+	m[0] -= cmps09_mag_calib[1];
 	m[2] -= cmps09_mag_calib[2];
 
 	cli();
@@ -174,10 +174,10 @@ static void vectors_update(void) {
 	/* TODO: use the dot product to check if the angle between
 	 * current and predicted vector is > 90deg */
 
-	/* We rotate the current vectors to our local coordinate system and
-	 * compare against our reference vectors rather than rotating the
-	 * reference vectors to produce the predicted/expected value and
-	 * comparing against measured values.
+	/* We rotate the reference vectors to our local coordinate system
+	 * and compare against our current vectors rather than rotating the
+	 * measured vectors to produce the predicted/expected value and
+	 * comparing against reference values.
 	 *
 	 * Note that while the magnetometer readings are more reliable in
 	 * detecting quick changes, the readings have lower resolution than
@@ -224,20 +224,20 @@ static void vectors_update(void) {
 	else
 		factor = 32000;
 
-	rotate_rev(rotated, m, ahrs_yaw, pitch, roll);
-	cross(crossed, staticm, rotated, factor >> 3);
+	rotate_rev(rotated, staticm, ahrs_yaw, -pitch, -roll);
+	cross(crossed, rotated, m, factor >> 3);
 	/* Assuming |m| and |staticm| of about 0.4T,
 	 * crossed_n is about sin(angular distance) << 12
 	 */
-	ahrs_yaw -= (crossed[2] + 2) >> 2;
+	ahrs_yaw += (crossed[2] + 2) >> 2;
 	pitch -= (int32_t) crossed[1] << 6;
 	roll += (int32_t) crossed[0] << 6;
 
-	rotate_rev(rotated, a, ahrs_yaw, pitch, roll);
-	cross(crossed, statica, rotated, 1);
-	ahrs_yaw -= (crossed[2] + 4) >> 3;
-	pitch -= (int32_t) crossed[1] << 8;
-	roll += (int32_t) crossed[0] << 8;
+	rotate_rev(rotated, statica, ahrs_yaw, -pitch, -roll);
+	cross(crossed, rotated, a, 1);
+	ahrs_yaw += (crossed[2] + 4) >> 3;
+	pitch -= (int32_t) crossed[1] << 7;
+	roll += (int32_t) crossed[0] << 7;
 #ifdef CAL
 	if (!(ahrs_pitch & 7)) {
 		serial_write_hex16(m[0]);
@@ -271,15 +271,21 @@ void ahrs_init(void) {
 		if (!(i & 7)) /* Every 32ms or so */
 			vectors_cal();
 	}
-	statica[0] = (avga[0] + ((1 << (REF_RES - 3)) - 1)) >> (REF_RES - 3);
-	statica[1] = (avga[1] + ((1 << (REF_RES - 3)) - 1)) >> (REF_RES - 3);
-	statica[2] = (avga[2] + ((1 << (REF_RES - 3)) - 1)) >> (REF_RES - 3);
-	staticm[0] = (avgm[0] + ((1 << (REF_RES - 3)) - 1)) >> (REF_RES - 3);
-	staticm[1] = (avgm[1] + ((1 << (REF_RES - 3)) - 1)) >> (REF_RES - 3);
-	staticm[2] = (avgm[2] + ((1 << (REF_RES - 3)) - 1)) >> (REF_RES - 3);
-	staticm[0] -= cmps09_mag_calib[0];
-	staticm[1] -= cmps09_mag_calib[1];
+	statica[0] = (avga[0] + ((1 << (REF_RES - 4)) - 1)) >> (REF_RES - 3);
+	statica[1] = (avga[1] + ((1 << (REF_RES - 4)) - 1)) >> (REF_RES - 3);
+	statica[2] = (avga[2] + ((1 << (REF_RES - 4)) - 1)) >> (REF_RES - 3);
+	staticm[1] = (avgm[0] + ((1 << (REF_RES - 4)) - 1)) >> (REF_RES - 3);
+	staticm[0] = (avgm[1] + ((1 << (REF_RES - 4)) - 1)) >> (REF_RES - 3);
+	staticm[2] = (avgm[2] + ((1 << (REF_RES - 4)) - 1)) >> (REF_RES - 3);
+	staticm[1] -= cmps09_mag_calib[0];
+	staticm[0] -= cmps09_mag_calib[1];
 	staticm[2] -= cmps09_mag_calib[2];
+#ifdef CAL
+	serial_write_hex32(avga[0]);
+	serial_write_hex32(avga[1]);
+	serial_write_hex32(avga[2]);
+	serial_write_eol();
+#endif
 
 	ahrs_pitch = ahrs_roll = ahrs_yaw = 0;
 	rel_pitch = rel_roll = 0;

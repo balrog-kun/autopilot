@@ -172,7 +172,7 @@ void setup(void) {
 	serial_write_fp32(len, 0x4050);
 	serial_write_str(" g");
 	serial_write_eol();
-	if (len > 0x4070 || len < 0x3fe0)
+	if (len > 0x4070 || len < 0x3f00)
 		die();
 
 	serial_write_str("Receiver signal: ");

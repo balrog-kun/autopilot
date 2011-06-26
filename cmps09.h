@@ -38,3 +38,15 @@ static const int16_t cmps09_mag_calib[3] = { -135, -20, -90 };
 #else
 static const int16_t cmps09_mag_calib[3] = { 0, 0, 0 };
 #endif
+
+/*
+ * These two angles describe the CMPS09's axis orientation compared to
+ * the vehicle's orientation.  We use this as the reference level to
+ * avoid having to always start on a level surface.  If these angles
+ * are slightly off because the CMPS09 was moved a little, the vehicle's
+ * idea of level will be wrong.
+ */
+static const uint16_t cmps09_x_axis_cos = 65547;
+static const uint16_t cmps09_x_axis_sin = 3415;
+static const uint16_t cmps09_y_axis_cos = 65235;
+static const uint16_t cmps09_y_axis_sin = 6273;
