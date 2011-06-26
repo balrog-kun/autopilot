@@ -69,8 +69,8 @@ static void gyro_ahrs_update(void) {
 	 * longer than some 30ms, if it is too long this may overflow.
 	 */
 #define TIME_RES 2 /* 1+1 because adc_values are doubled */
-#define DIFF_RES 3
-#define REF_RES (DIFF_RES + 7)
+#define DIFF_RES 4
+#define REF_RES (DIFF_RES + 6)
 	diff = (diff/* + (1 << (DIFF_RES - 1))*/) >> DIFF_RES;
 	rel_roll += (int32_t) ((((int32_t) (int16_t) x << REF_RES) - x_ref) *
 			diff + (1 << (REF_RES - DIFF_RES + TIME_RES - 1))) >>
