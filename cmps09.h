@@ -46,7 +46,21 @@ static const int16_t cmps09_mag_calib[3] = { 0, 0, 0 };
  * are slightly off because the CMPS09 was moved a little, the vehicle's
  * idea of level will be wrong.
  */
-static const uint16_t cmps09_x_axis_cos = 65547;
-static const uint16_t cmps09_x_axis_sin = 3415;
-static const uint16_t cmps09_y_axis_cos = 65235;
-static const uint16_t cmps09_y_axis_sin = 6273;
+static const uint16_t cmps09_x_axis_cos = 65235;
+static const uint16_t cmps09_x_axis_sin = 6273;
+static const uint16_t cmps09_y_axis_cos = 65447;
+static const uint16_t cmps09_y_axis_sin = 3415;
+
+static inline void cmps09_xy_adjust(int16_t v[3]) {
+	int16_t z;
+
+	z = ((int32_t) v[2] * cmps09_y_axis_cos +
+			(int32_t) v[0] * cmps09_y_axis_sin) >> 16;
+	v[0] = ((int32_t) v[0] * cmps09_y_axis_cos -
+			(int32_t) v[2] * cmps09_y_axis_sin) >> 16;
+
+	v[2] = ((int32_t) z * cmps09_x_axis_cos +
+			(int32_t) v[1] * cmps09_x_axis_sin) >> 16;
+	v[1] = ((int32_t) v[1] * cmps09_x_axis_cos -
+			(int32_t) z * cmps09_x_axis_sin) >> 16;
+}

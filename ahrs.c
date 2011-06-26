@@ -147,6 +147,9 @@ static void vectors_update(void) {
 	m[0] -= cmps09_mag_calib[1];
 	m[2] -= cmps09_mag_calib[2];
 
+	cmps09_xy_adjust(m);
+	cmps09_xy_adjust(a);
+
 	cli();
 	pitch = -rel_pitch, rel_pitch = 0;
 	roll = -rel_roll, rel_roll = 0;
@@ -230,8 +233,8 @@ static void vectors_update(void) {
 	 * crossed_n is about sin(angular distance) << 12
 	 */
 	ahrs_yaw += (crossed[2] + 2) >> 2;
-	pitch -= (int32_t) crossed[1] << 6;
-	roll += (int32_t) crossed[0] << 6;
+	pitch -= (int32_t) crossed[1] << 5;
+	roll += (int32_t) crossed[0] << 5;
 
 	rotate_rev(rotated, statica, ahrs_yaw, -pitch, -roll);
 	cross(crossed, rotated, a, 1);
@@ -280,12 +283,19 @@ void ahrs_init(void) {
 	staticm[1] -= cmps09_mag_calib[0];
 	staticm[0] -= cmps09_mag_calib[1];
 	staticm[2] -= cmps09_mag_calib[2];
+
+	cmps09_xy_adjust(staticm);
+	cmps09_xy_adjust(statica);
 #ifdef CAL
-	serial_write_hex32(avga[0]);
-	serial_write_hex32(avga[1]);
-	serial_write_hex32(avga[2]);
+	serial_write_hex16(statica[0]);
+	serial_write_hex16(statica[1]);
+	serial_write_hex16(statica[2]);
 	serial_write_eol();
 #endif
+
+	/* TODO: use a constant predefiend statica such as:
+	 * statica[0] = statica[1] = 0
+	 */
 
 	ahrs_pitch = ahrs_roll = ahrs_yaw = 0;
 	rel_pitch = rel_roll = 0;
