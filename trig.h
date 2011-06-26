@@ -20,10 +20,9 @@ static inline int16_t cos_32_l(int32_t x) {
 	return sin_32_l(x);
 }
 
-static inline void rotate(int16_t *ret, int16_t v[3],
+static inline void rotate(int16_t ret[3], int16_t v[3],
 		int16_t y, int32_t p, int32_t r) {
-	int16_t c, s;
-	int32_t x;
+	int16_t c, s, x;
 
 	/* Roll */
 	c = cos_32_l(r), s = sin_32_l(r);
@@ -35,14 +34,13 @@ static inline void rotate(int16_t *ret, int16_t v[3],
 	ret[2] = ((int32_t) ret[2] * c + (int32_t) v[0] * s + 0x3fff) >> 15;
 	/* Yaw */
 	c = cos_16_l(y), s = sin_16_l(y);
-	ret[0] = ((int32_t) x * c + (int32_t) ret[1] * s + 0x3fff) >> 15;
 	ret[1] = ((int32_t) ret[1] * c - (int32_t) x * s + 0x3fff) >> 15;
+	ret[0] = ((int32_t) x * c + (int32_t) ret[1] * s + 0x3fff) >> 15;
 }
 
-static inline void rotate_rev(int16_t *ret, int16_t v[3],
+static inline void rotate_rev(int16_t ret[3], int16_t v[3],
 		int16_t y, int32_t p, int32_t r) {
-	int16_t c, s;
-	int32_t z;
+	int16_t c, s, z;
 
 	/* Yaw */
 	c = cos_16_l(-y), s = sin_16_l(-y);
@@ -54,8 +52,8 @@ static inline void rotate_rev(int16_t *ret, int16_t v[3],
 	ret[0] = ((int32_t) ret[0] * c - (int32_t) v[2] * s + 0x3fff) >> 15;
 	/* Roll */
 	c = cos_32_l(-r), s = sin_32_l(-r);
-	ret[1] = ((int32_t) ret[1] * c - z * s + 0x3fff) >> 15;
-	ret[2] = (z * c + (int32_t) ret[1] * s + 0x3fff) >> 15;
+	ret[2] = ((int32_t) z * c + (int32_t) ret[1] * s + 0x3fff) >> 15;
+	ret[1] = ((int32_t) ret[1] * c - (int32_t) z * s + 0x3fff) >> 15;
 }
 
 static inline void cross(int16_t *ret, int16_t va[3], int16_t vb[3],
