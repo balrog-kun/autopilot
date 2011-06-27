@@ -156,8 +156,8 @@ static void vectors_update(void) {
 	sei();
 
 	/* TODO: decoupling like in FlightCtrl */
-	ahrs_pitch_rate = pitch; /* TODO */
-	ahrs_roll_rate = roll; /* TODO */
+	ahrs_pitch_rate = pitch >> 16; /* TODO */
+	ahrs_roll_rate = roll >> 16; /* TODO */
 
 	/* Integrate */
 

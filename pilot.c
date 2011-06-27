@@ -195,12 +195,77 @@ void setup(void) {
 	show_state();
 }
 
+void control_update(void) {
+	int16_t cur_pitch, cur_roll, dest_pitch, dest_roll, base_throttle;
+	/* Motors:
+	 * (A)_   .    _(B)
+	 *    '#_ .  _#'
+	 *      '#__#'
+	 * - - - _##_ - - - - pitch axis
+	 *     _#'. '#_
+	 *   _#'  .   '#_
+	 * (C)    .     (D)
+	 *        |
+	 *        '--- roll axis
+	 */
+	int32_t a, b, c, d;
+
+	cli();
+	cur_pitch = (ahrs_pitch >> 16) + ahrs_pitch_rate * 40;
+	cur_roll = (ahrs_roll >> 16) + ahrs_roll_rate * 40;
+	sei();
+
+	/* Some easing */
+	if (cur_pitch < 0x400 && cur_pitch > -0x400)
+		cur_pitch >>= 2;
+	else if (cur_pitch > 0)
+		cur_pitch -= 0x300;
+	else
+		cur_pitch += 0x300;
+
+	dest_pitch = ((int16_t) rx_cy_front << 5) - (128 << 5);
+	dest_roll = ((int16_t) rx_cy_right << 5) - (128 << 5);
+
+	base_throttle = rx_co_throttle << 7;
+
+	dest_pitch = -(cur_pitch + dest_pitch) / 2;
+	dest_roll = -(cur_roll + dest_roll) / 2;
+
+	/* TODO: keep track of the motor feedback (through ahrs_pitch_rate
+	 * and ahrs_roll_rate) for each motor and scale accordingly.
+	 */
+
+	a = (int32_t) base_throttle + dest_pitch + dest_roll;
+	b = (int32_t) base_throttle - dest_pitch + dest_roll;
+	c = (int32_t) base_throttle + dest_pitch - dest_roll;
+	d = (int32_t) base_throttle - dest_pitch - dest_roll;
+#define CLAMP(x, mi, ma)	\
+	if (x < mi)		\
+		x = mi;		\
+	if (x > ma)		\
+		x = ma;
+	CLAMP(a, 0, 32000);
+	CLAMP(b, 0, 32000);
+	CLAMP(c, 0, 32000);
+	CLAMP(d, 0, 32000);
+	actuator_set(0, (uint16_t) a);
+	actuator_set(1, (uint16_t) b);
+	actuator_set(2, (uint16_t) c);
+	actuator_set(3, (uint16_t) d);
+}
+
 void loop(void) {
-	my_delay(200);
+	my_delay(20); /* 50Hz update rate */
+
+	control_update();
+#if 0
 	serial_write_fp32(ahrs_pitch, ROLL_PITCH_180DEG / 180);
 	serial_write_fp32(ahrs_roll, ROLL_PITCH_180DEG / 180);
 	serial_write_fp32((int32_t) ahrs_yaw * 180, 32768);
 	serial_write_eol();
+#endif
+
+	/* TODO: battery voltage check, send status over zigbee etc */
 }
 
 int main(void) {
