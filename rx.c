@@ -47,13 +47,8 @@ ISR(INT0_vect) {
 /* Individual rx outputs connected to PB0, PB1, PB2, PB3 (and so on)
  * Note: only unmask interrupts for the pins actually connected to Rx.  */
 void rx_init(void) {
-#ifdef FIRST_4_CHANNELS_ONLY
 	DDRB &= ~0x0f;
 	PCMSK0 = 0x0f;
-#else
-	DDRB &= ~0x3f;
-	PCMSK0 = 0x3f;
-#endif
 	PCICR |= 0x01;
 }
 
