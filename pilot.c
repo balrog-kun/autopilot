@@ -197,7 +197,7 @@ void setup(void) {
 
 void control_update(void) {
 	int16_t cur_pitch, cur_roll, dest_pitch, dest_roll, base_throttle;
-	/* Motors:
+	/* Motors (top view):
 	 * (A)_   .    _(B)
 	 *    '#_ .  _#'
 	 *      '#__#'
