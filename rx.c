@@ -50,6 +50,29 @@ void rx_init(void) {
 	PCICR |= 0x01;
 }
 
+static inline void rx_esky_update(void) {
+	uint16_t up_raw = rx_ch[2] >= ((256 + 31) << 6) ?
+		((256 + 31) << 6) - 1 : rx_ch[2];
+	uint16_t back_raw = rx_ch[1] -
+		(rx_ch[2] >> 2) - (rx_ch[2] >> 4);
+	uint16_t left_raw = rx_ch[0] + (back_raw >> 1) -
+		(rx_ch[2] >> 2) - (rx_ch[2] >> 4);
+
+	static const uint8_t rx_esky_cy_f_bias[16] =
+		{ 4, 4, 3, 3, 3, 2, 2, 1, 2, 3, 4, 6, 6, 6, 6, 5, };
+	static const uint8_t rx_esky_cy_r_bias[16] =
+		{ 5, 5, 6, 7, 7, 8, 8, 9, 9, 6, 3, 2, 1, 1, 2, 3, };
+
+	rx_co_throttle = (up_raw >> 6) - 31;
+	rx_co_right = (rx_ch[3] >> 6) - 10;
+	rx_cy_front = ((~back_raw) >> 6) -
+		rx_esky_cy_f_bias[rx_co_throttle >> 4];
+	rx_cy_right = ((~left_raw) >> 6) + 61 +
+		rx_esky_cy_r_bias[rx_co_throttle >> 4];
+
+	rx_no_signal = 0;
+}
+
 ISR(PCINT0_vect) {
 	static uint32_t rx_up = 0;
 	static uint8_t rx_chnum = 0;
@@ -95,21 +118,8 @@ ISR(PCINT0_vect) {
 		 * for the left-right / front-back nick values we should
 		 * compare th three servo angles.
 		 */
-		if (rx_chnum == 4) {
-			uint16_t up_raw = rx_ch[2] >= ((256 + 31) << 6) ?
-				((256 + 31) << 6) - 1 : rx_ch[2];
-			uint16_t back_raw = rx_ch[1] -
-				(rx_ch[2] >> 2) - (rx_ch[2] >> 4);
-			uint16_t left_raw = rx_ch[0] + (back_raw >> 1) -
-				(rx_ch[2] >> 2) - (rx_ch[2] >> 4);
-
-			rx_co_throttle = (up_raw >> 6) - 31;
-			rx_co_right = (rx_ch[3] >> 6) - 10;
-			rx_cy_front = ((~back_raw) >> 6) - 4;
-			rx_cy_right = ((~left_raw) >> 6) + 66;
-
-			rx_no_signal = 0;
-		}
+		if (rx_chnum == 4)
+			rx_esky_update();
 	}
 
 	rx_up = now;
