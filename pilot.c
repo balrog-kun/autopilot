@@ -232,6 +232,8 @@ void control_update(void) {
 	dest_pitch = -(cur_pitch + dest_pitch) / 2;
 	dest_roll = -(cur_roll + dest_roll) / 2;
 	dest_yaw = ((int16_t) rx_co_right << 4) - (128 << 4);
+	if (!rx_gyro_sw)
+		dest_yaw = 0;
 
 	/* TODO: keep track of the motor feedback (through ahrs_pitch_rate
 	 * and ahrs_roll_rate) for each motor and scale accordingly.

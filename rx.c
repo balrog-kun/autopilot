@@ -14,6 +14,8 @@ volatile uint8_t rx_co_throttle = 0;
 volatile uint8_t rx_co_right = 0;
 volatile uint8_t rx_cy_front = 0;
 volatile uint8_t rx_cy_right = 0;
+volatile uint8_t rx_gyro_sw = 0;
+volatile uint8_t rx_gyro_pot = 0;
 volatile uint8_t rx_no_signal = 0;
 
 #if 0
@@ -45,14 +47,20 @@ ISR(INT0_vect) {
 /* Individual rx outputs connected to PB0, PB1, PB2, PB3 (and so on)
  * Note: only unmask interrupts for the pins actually connected to Rx.  */
 void rx_init(void) {
+#ifdef FIRST_4_CHANNELS_ONLY
 	DDRB &= ~0x0f;
 	PCMSK0 = 0x0f;
+#else
+	DDRB &= ~0x3f;
+	PCMSK0 = 0x3f;
+#endif
 	PCICR |= 0x01;
 }
 
 static inline void rx_esky_update(void) {
 	uint16_t up_raw = rx_ch[2] >= ((256 + 31) << 6) ?
 		((256 + 31) << 6) - 1 : rx_ch[2];
+#ifdef FIRST_4_CHANNELS_ONLY
 	uint16_t back_raw = rx_ch[1] -
 		(rx_ch[2] >> 2) - (rx_ch[2] >> 4);
 	uint16_t left_raw = rx_ch[0] + (back_raw >> 1) -
@@ -69,6 +77,17 @@ static inline void rx_esky_update(void) {
 		rx_esky_cy_f_bias[rx_co_throttle >> 4];
 	rx_cy_right = ((~left_raw) >> 6) + 61 +
 		rx_esky_cy_r_bias[rx_co_throttle >> 4];
+#else
+	rx_co_throttle = (up_raw >> 6) - 31;
+	rx_co_right = (rx_ch[3] >> 6) - 10;
+	rx_cy_front = ((rx_ch[0] - rx_ch[1] * 2 - rx_ch[5]) >> 8) - 0x3a;
+	rx_cy_right = (0x800 - rx_ch[5] - rx_ch[0]) >> 7;
+
+	rx_gyro_sw = rx_ch[4] < 0x2300;
+	rx_gyro_pot = (uint16_t) ((rx_ch[4] - 0x0300) & 0x1fff) >> 5;
+	if (rx_ch[4] >= 0x4300)
+		rx_gyro_pot = 0xff;
+#endif
 
 	rx_no_signal = 0;
 }
@@ -109,16 +128,12 @@ ISR(PCINT0_vect) {
 		 * arithmetics to go back to the raw stick position values
 		 * for any processing in the autopilot.  This is currently
 		 * assuming the Idle Up setting ("aerobatic mode") is off.
-		 *
-		 * It's not ideal, but at least we're only using the 4
-		 * first channels and can re-use channels 5 and 6 for
-		 * something like triggering camera shutter or something
-		 * else.  Ideally we should calculate the collective
-		 * pitch by averaging the three servo angles, I think, and
-		 * for the left-right / front-back nick values we should
-		 * compare th three servo angles.
 		 */
+#ifdef FIRST_4_CHANNELS_ONLY
 		if (rx_chnum == 4)
+#else
+		if (rx_chnum == 6)
+#endif
 			rx_esky_update();
 	}
 

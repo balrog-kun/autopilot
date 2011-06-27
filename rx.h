@@ -16,3 +16,7 @@ extern volatile uint8_t rx_co_right; /* aka. rudder */
 /* Cyclic */
 extern volatile uint8_t rx_cy_front; /* aka. elevator */
 extern volatile uint8_t rx_cy_right; /* aka. ailerons */
+
+/* ET6I custom controls */
+extern volatile uint8_t rx_gyro_sw;
+extern volatile uint8_t rx_gyro_pot;
