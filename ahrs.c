@@ -44,8 +44,11 @@ static int32_t x_ref, y_ref;
 
 static void gyro_ahrs_update(void) {
 	uint32_t diff;
-	uint16_t x = adc_values[0];
-	uint16_t y = adc_values[1];
+	uint16_t x, y;
+
+	cli();
+	x = adc_values[0];
+	y = adc_values[1];
 
 	diff = now - prev_ts;
 	prev_ts = now;
@@ -71,6 +74,13 @@ static void gyro_ahrs_update(void) {
 #define TIME_RES 2 /* 1+1 because adc_values are doubled */
 #define DIFF_RES 4
 #define REF_RES (DIFF_RES + 6)
+
+	ahrs_roll_rate = ((int16_t) x << 6) -
+		((x_ref + (1 << (REF_RES - 7))) >> (REF_RES - 6));
+	ahrs_pitch_rate = ((int16_t) y << 6) -
+		((y_ref + (1 << (REF_RES - 7))) >> (REF_RES - 6));
+	sei();
+
 	diff = (diff/* + (1 << (DIFF_RES - 1))*/) >> DIFF_RES;
 	rel_roll += (int32_t) ((((int32_t) (int16_t) x << REF_RES) - x_ref) *
 			diff + (1 << (REF_RES - DIFF_RES + TIME_RES - 1))) >>
@@ -156,8 +166,6 @@ static void vectors_update(void) {
 	sei();
 
 	/* TODO: decoupling like in FlightCtrl */
-	ahrs_pitch_rate = pitch >> 16; /* TODO */
-	ahrs_roll_rate = roll >> 16; /* TODO */
 
 	/* Integrate */
 
