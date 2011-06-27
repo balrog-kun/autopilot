@@ -196,7 +196,8 @@ void setup(void) {
 }
 
 void control_update(void) {
-	int16_t cur_pitch, cur_roll, dest_pitch, dest_roll, base_throttle;
+	int16_t cur_pitch, cur_roll, dest_pitch, dest_roll, dest_yaw,
+		base_throttle;
 	/* Motors (top view):
 	 * (A)_   .    _(B)
 	 *    '#_ .  _#'
@@ -230,15 +231,16 @@ void control_update(void) {
 
 	dest_pitch = -(cur_pitch + dest_pitch) / 2;
 	dest_roll = -(cur_roll + dest_roll) / 2;
+	dest_yaw = ((int16_t) rx_co_right << 4) - (128 << 4);
 
 	/* TODO: keep track of the motor feedback (through ahrs_pitch_rate
 	 * and ahrs_roll_rate) for each motor and scale accordingly.
 	 */
 
-	a = (int32_t) base_throttle + dest_pitch + dest_roll;
-	b = (int32_t) base_throttle - dest_pitch + dest_roll;
-	c = (int32_t) base_throttle + dest_pitch - dest_roll;
-	d = (int32_t) base_throttle - dest_pitch - dest_roll;
+	a = (int32_t) base_throttle + dest_pitch + dest_roll + dest_yaw;
+	b = (int32_t) base_throttle - dest_pitch + dest_roll - dest_yaw;
+	c = (int32_t) base_throttle + dest_pitch - dest_roll - dest_yaw;
+	d = (int32_t) base_throttle - dest_pitch - dest_roll + dest_yaw;
 #define CLAMP(x, mi, ma)	\
 	if (x < mi)		\
 		x = mi;		\

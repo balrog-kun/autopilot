@@ -12,7 +12,7 @@ extern volatile uint16_t rx_ch[10];
 extern volatile uint8_t rx_no_signal;
 /* Collective */
 extern volatile uint8_t rx_co_throttle;
-extern volatile uint8_t rx_co_right;
+extern volatile uint8_t rx_co_right; /* aka. rudder */
 /* Cyclic */
-extern volatile uint8_t rx_cy_front;
-extern volatile uint8_t rx_cy_right;
+extern volatile uint8_t rx_cy_front; /* aka. elevator */
+extern volatile uint8_t rx_cy_right; /* aka. ailerons */
