@@ -196,8 +196,9 @@ void setup(void) {
 }
 
 void control_update(void) {
-	int16_t cur_pitch, cur_roll, dest_pitch, dest_roll, dest_yaw,
-		base_throttle;
+	int16_t cur_pitch, cur_roll, cur_yaw;
+	int16_t dest_pitch, dest_roll, dest_yaw, base_throttle;
+	static int16_t set_yaw = 0;
 	/* Motors (top view):
 	 * (A)_   .    _(B)
 	 *    '#_ .  _#'
@@ -214,6 +215,7 @@ void control_update(void) {
 	cli();
 	cur_pitch = (ahrs_pitch >> 16) + (ahrs_pitch_rate >> 3);
 	cur_roll = (ahrs_roll >> 16) + (ahrs_roll_rate >> 3);
+	cur_yaw = ahrs_yaw + (ahrs_yaw_rate << 1);
 	sei();
 
 	/* Some easing */
@@ -226,14 +228,27 @@ void control_update(void) {
 
 	dest_pitch = ((int16_t) rx_cy_front << 5) - (128 << 5);
 	dest_roll = ((int16_t) rx_cy_right << 5) - (128 << 5);
+	set_yaw += ((int16_t) rx_co_right << 2) - (128 << 2);
+	dest_yaw = set_yaw;
 
 	base_throttle = rx_co_throttle << 7;
 
 	dest_pitch = -(cur_pitch + dest_pitch) / 2;
 	dest_roll = -(cur_roll + dest_roll) / 2;
-	dest_yaw = ((int16_t) rx_co_right << 4) - (128 << 4);
-	if (!rx_gyro_sw)
-		dest_yaw = 0;
+	dest_yaw = cur_yaw - dest_yaw;
+
+#define CLAMP(x, mi, ma)	\
+	if (x < mi)		\
+		x = mi;		\
+	if (x > ma)		\
+		x = ma;
+
+	if (rx_gyro_sw) {
+		CLAMP(dest_yaw, -0x800, 0x800)
+	} else {
+		dest_yaw = ((int16_t) rx_co_right << 5) - (128 << 5);
+		set_yaw = cur_yaw;
+	}
 
 	/* TODO: keep track of the motor feedback (through ahrs_pitch_rate
 	 * and ahrs_roll_rate) for each motor and scale accordingly.
@@ -243,11 +258,6 @@ void control_update(void) {
 	b = (int32_t) base_throttle - dest_pitch + dest_roll - dest_yaw;
 	c = (int32_t) base_throttle + dest_pitch - dest_roll - dest_yaw;
 	d = (int32_t) base_throttle - dest_pitch - dest_roll + dest_yaw;
-#define CLAMP(x, mi, ma)	\
-	if (x < mi)		\
-		x = mi;		\
-	if (x > ma)		\
-		x = ma;
 	CLAMP(a, 0, 32000);
 	CLAMP(b, 0, 32000);
 	CLAMP(c, 0, 32000);
