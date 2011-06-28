@@ -130,6 +130,7 @@ static void vectors_cal(void) {
 
 static void vectors_update(void) {
 	int32_t pitch, roll, lensq;
+	int16_t yaw;
 	int16_t a[3], m[3]; /* Current Acc & Mag readings */
 	int16_t rotated[3]; /* Rotated (predicted) vector */
 	int16_t crossed[3]; /* Cross product of current & predicted vectors */
@@ -163,6 +164,7 @@ static void vectors_update(void) {
 	cli();
 	pitch = -rel_pitch, rel_pitch = 0;
 	roll = -rel_roll, rel_roll = 0;
+	yaw = ahrs_yaw;
 	sei();
 
 	/* TODO: decoupling like in FlightCtrl */
@@ -235,18 +237,18 @@ static void vectors_update(void) {
 	else
 		factor = 32000;
 
-	rotate_rev(rotated, staticm, ahrs_yaw, -pitch, -roll);
+	rotate_rev(rotated, staticm, yaw, -pitch, -roll);
 	cross(crossed, rotated, m, factor >> 3);
 	/* Assuming |m| and |staticm| of about 0.4T,
 	 * crossed_n is about sin(angular distance) << 12
 	 */
-	ahrs_yaw += (crossed[2] + 2) >> 2;
+	yaw += (crossed[2] + 2) >> 2;
 	pitch -= (int32_t) crossed[1] << 5;
 	roll += (int32_t) crossed[0] << 5;
 
-	rotate_rev(rotated, statica, ahrs_yaw, -pitch, -roll);
+	rotate_rev(rotated, statica, yaw, -pitch, -roll);
 	cross(crossed, rotated, a, 1);
-	ahrs_yaw += (crossed[2] + 4) >> 3;
+	yaw += (crossed[2] + 4) >> 3;
 	pitch -= (int32_t) crossed[1] << 7;
 	roll += (int32_t) crossed[0] << 7;
 #ifdef CAL
@@ -265,6 +267,8 @@ static void vectors_update(void) {
 	cli();
 	ahrs_pitch = pitch;
 	ahrs_roll = roll;
+	ahrs_yaw_rate = yaw - ahrs_yaw;
+	ahrs_yaw = yaw;
 	sei();
 }
 
