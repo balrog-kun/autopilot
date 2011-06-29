@@ -15,7 +15,8 @@ volatile uint8_t rx_co_right = 0;
 volatile uint8_t rx_cy_front = 0;
 volatile uint8_t rx_cy_right = 0;
 volatile uint8_t rx_gyro_sw = 0;
-volatile uint8_t rx_gyro_pot = 0;
+volatile uint8_t rx_right_pot = 0;
+volatile uint8_t rx_left_pot = 0;
 volatile uint8_t rx_no_signal = 0;
 
 #if 0
@@ -79,9 +80,11 @@ static inline void rx_esky_update(void) {
 	rx_cy_right = (0x800 - rx_ch[5] - rx_ch[0]) >> 7;
 
 	rx_gyro_sw = rx_ch[4] < 0x2300;
-	rx_gyro_pot = (uint16_t) ((rx_ch[4] - 0x0300) & 0x1fff) >> 5;
+	rx_right_pot = (uint16_t) ((rx_ch[4] - 0x0300) & 0x1fff) >> 5;
 	if (rx_ch[4] >= 0x4300)
-		rx_gyro_pot = 0xff;
+		rx_right_pot = 0xff;
+	/* TODO */
+	rx_left_pot = (rx_ch[0] + rx_ch[1] - rx_ch[5] - (rx_ch[2] >> 1)) >> 8;
 #endif
 
 	rx_no_signal = 0;

@@ -19,4 +19,5 @@ extern volatile uint8_t rx_cy_right; /* aka. ailerons */
 
 /* ET6I custom controls */
 extern volatile uint8_t rx_gyro_sw;
-extern volatile uint8_t rx_gyro_pot;
+extern volatile uint8_t rx_right_pot;
+extern volatile uint8_t rx_left_pot;
