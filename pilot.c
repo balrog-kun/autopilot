@@ -195,10 +195,40 @@ void setup(void) {
 	show_state();
 }
 
+/* The modes are a set of boolean switches that can be set or reset/cleared
+ * using the "gyro switch" on the transmitter.  Every move of the switch
+ * changes the mode pointed at by the "CH5" potentiometer which is on the
+ * right side of the transmitter.
+ */
+enum modes_e {
+	MODE_MOTORS_ARMED,	/* TODO: Arm/disarm the motors, too risky? */
+	MODE_HEADINGHOLD_ENABLE,/* Enable compass-based heading-hold */
+	MODE_PANTILT_ENABLE	/* TODO: Cyclic stick controls the pan&tilt */
+};
+static uint8_t modes =
+	(0 << MODE_MOTORS_ARMED) |
+	(0 << MODE_HEADINGHOLD_ENABLE) |
+	(0 << MODE_PANTILT_ENABLE);
+static uint8_t prev_sw = 0;
+
+void modes_update(void) {
+	uint8_t num;
+
+	if (rx_gyro_sw == prev_sw)
+		return;
+	prev_sw = rx_gyro_sw;
+
+	num = ((uint16_t) rx_right_pot + 36) / 49;
+	modes &= 1 << num;
+	modes |= prev_sw << num;
+}
+
 void control_update(void) {
 	int16_t cur_pitch, cur_roll, cur_yaw;
 	int16_t dest_pitch, dest_roll, dest_yaw, base_throttle;
 	static int16_t set_yaw = 0;
+	uint8_t co_right = rx_co_right, cy_right = rx_cy_right,
+		cy_front = rx_cy_front;
 	/* Motors (top view):
 	 * (A)_   .    _(B)
 	 *    '#_ .  _#'
@@ -218,24 +248,36 @@ void control_update(void) {
 	cur_yaw = ahrs_yaw + (ahrs_yaw_rate << 1);
 	sei();
 
-	/* Some easing */
-	if (cur_pitch < 0x400 && cur_pitch > -0x400)
-		cur_pitch >>= 2;
-	else if (cur_pitch > 0)
-		cur_pitch -= 0x300;
-	else
-		cur_pitch += 0x300;
+	if (modes & (1 << MODE_PANTILT_ENABLE)) {
+		co_right = 0x80;
+		cy_right = 0x80;
+		cy_front = 0x80;
+	}
 
-	dest_pitch = ((int16_t) rx_cy_front << 5) - (128 << 5);
-	dest_roll = ((int16_t) rx_cy_right << 5) - (128 << 5);
-	set_yaw += ((int16_t) rx_co_right << 2) - (128 << 2);
+	dest_pitch = ((int16_t) cy_front << 5) - (128 << 5);
+	dest_roll = ((int16_t) cy_right << 5) - (128 << 5);
+	set_yaw += ((int16_t) co_right << 2) - (128 << 2);
 	dest_yaw = set_yaw;
 
 	base_throttle = rx_co_throttle << 7;
 
-	dest_pitch = -(cur_pitch + dest_pitch) / 2;
-	dest_roll = -(cur_roll + dest_roll) / 2;
+	dest_pitch = -(cur_pitch + dest_pitch) / 1;
+	dest_roll = -(cur_roll + dest_roll) / 1;
 	dest_yaw = cur_yaw - dest_yaw;
+
+	/* Some easing */
+	if (dest_pitch < 0x400 && dest_pitch > -0x400)
+		dest_pitch >>= 2;
+	else if (dest_pitch > 0)
+		dest_pitch -= 0x300;
+	else
+		dest_pitch += 0x300;
+	if (dest_roll < 0x400 && dest_roll > -0x400)
+		dest_roll >>= 2;
+	else if (dest_roll > 0)
+		dest_roll -= 0x300;
+	else
+		dest_roll += 0x300;
 
 #define CLAMP(x, mi, ma)	\
 	if (x < mi)		\
@@ -243,10 +285,10 @@ void control_update(void) {
 	if (x > ma)		\
 		x = ma;
 
-	if (rx_gyro_sw) {
+	if (modes & (1 << MODE_HEADINGHOLD_ENABLE)) {
 		CLAMP(dest_yaw, -0x800, 0x800)
 	} else {
-		dest_yaw = ((int16_t) rx_co_right << 5) - (128 << 5);
+		dest_yaw = (128 << 5) - ((int16_t) co_right << 5);
 		set_yaw = cur_yaw;
 	}
 
@@ -271,6 +313,7 @@ void control_update(void) {
 void loop(void) {
 	my_delay(20); /* 50Hz update rate */
 
+	modes_update();
 	control_update();
 #if 0
 	serial_write_fp32(ahrs_pitch, ROLL_PITCH_180DEG / 180);
