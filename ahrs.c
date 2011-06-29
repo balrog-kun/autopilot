@@ -75,10 +75,10 @@ static void gyro_ahrs_update(void) {
 #define DIFF_RES 4
 #define REF_RES (DIFF_RES + 6)
 
-	ahrs_roll_rate = ((int16_t) x << 6) -
-		((x_ref + (1 << (REF_RES - 7))) >> (REF_RES - 6));
-	ahrs_pitch_rate = ((int16_t) y << 6) -
-		((y_ref + (1 << (REF_RES - 7))) >> (REF_RES - 6));
+	ahrs_roll_rate = ((x_ref + (1 << (REF_RES - 7))) >> (REF_RES - 6)) -
+		((int16_t) x << 6);
+	ahrs_pitch_rate = ((y_ref + (1 << (REF_RES - 7))) >> (REF_RES - 6)) -
+		((int16_t) y << 6);
 	sei();
 
 	diff = (diff/* + (1 << (DIFF_RES - 1))*/) >> DIFF_RES;

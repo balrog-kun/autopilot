@@ -243,8 +243,8 @@ void control_update(void) {
 	int32_t a, b, c, d;
 
 	cli();
-	cur_pitch = (ahrs_pitch >> 16) + (ahrs_pitch_rate >> 3);
-	cur_roll = (ahrs_roll >> 16) + (ahrs_roll_rate >> 3);
+	cur_pitch = (ahrs_pitch >> 16) + (ahrs_pitch_rate >> 2);
+	cur_roll = (ahrs_roll >> 16) + (ahrs_roll_rate >> 2);
 	cur_yaw = ahrs_yaw + (ahrs_yaw_rate << 1);
 	sei();
 
