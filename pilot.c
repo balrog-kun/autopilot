@@ -201,15 +201,28 @@ void setup(void) {
  * right side of the transmitter.
  */
 enum modes_e {
-	MODE_MOTORS_ARMED,	/* TODO: Arm/disarm the motors, too risky? */
-	MODE_HEADINGHOLD_ENABLE,/* Enable compass-based heading-hold */
-	MODE_PANTILT_ENABLE	/* TODO: Cyclic stick controls the pan&tilt */
+	/* TODO: Arm/disarm the motors, too risky? */
+	MODE_MOTORS_ARMED,
+	/* Enable compass-based heading-hold, pitch/roll hold is always on */
+	MODE_HEADINGHOLD_ENABLE,
+	/* TODO: Enable accelerometer-based position / velocity hold,
+	 * (position hold == velocity hold at 0 velocity), don't expect
+	 * wonders from this mode though */
+	MODE_VELOCITYHOLD_ENABLE,
+	/* TODO: Cyclic stick controls the camera pan&tilt instead of the
+	 * vehicle's attitude */
+	MODE_PANTILT_ENABLE,
 };
 static uint8_t modes =
 	(0 << MODE_MOTORS_ARMED) |
 	(0 << MODE_HEADINGHOLD_ENABLE) |
+	(0 << MODE_VELOCITYHOLD_ENABLE) |
 	(0 << MODE_PANTILT_ENABLE);
 static uint8_t prev_sw = 0;
+
+static uint8_t yaw_deadband_pos = 0x80;
+static uint8_t roll_deadband_pos = 0x80;
+static uint8_t pitch_deadband_pos = 0x80;
 
 void modes_update(void) {
 	uint8_t num;
@@ -241,6 +254,43 @@ void control_update(void) {
 	 *        '--- roll axis
 	 */
 	int32_t a, b, c, d;
+
+	/* Yaw stick deadband in heading-hold mode */
+	if ((modes & (1 << MODE_HEADINGHOLD_ENABLE)) ||
+			(modes & (1 << MODE_VELOCITYHOLD_ENABLE))) {
+		co_right += 0x80 - yaw_deadband_pos;
+		if (co_right >= 0x80 - 3 && co_right <= 0x80 + 3)
+			co_right = 0x80;
+		else if (co_right > 0x80)
+			co_right -= 3;
+		else
+			co_right += 3;
+	} else
+		yaw_deadband_pos = co_right;
+
+	/* Roll stick deadband in velocity-hold mode */
+	if (modes & (1 << MODE_VELOCITYHOLD_ENABLE)) {
+		cy_right += 0x80 - pitch_deadband_pos;
+		if (cy_right >= 0x80 - 3 && cy_right <= 0x80 + 3)
+			cy_right = 0x80;
+		else if (cy_right > 0x80)
+			cy_right -= 3;
+		else
+			cy_right += 3;
+	} else
+		roll_deadband_pos = cy_right;
+
+	/* Pitch stick deadband in velocity-hold mode */
+	if (modes & (1 << MODE_VELOCITYHOLD_ENABLE)) {
+		cy_front += 0x80 - pitch_deadband_pos;
+		if (cy_front >= 0x80 - 3 && cy_front <= 0x80 + 3)
+			cy_front = 0x80;
+		else if (cy_front > 0x80)
+			cy_front -= 3;
+		else
+			cy_front += 3;
+	} else
+		pitch_deadband_pos = cy_front;
 
 	cli();
 	cur_pitch = (ahrs_pitch >> 16) + (ahrs_pitch_rate >> 2);
