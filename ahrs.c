@@ -239,18 +239,22 @@ static void vectors_update(void) {
 
 	rotate_rev(rotated, staticm, yaw, -pitch, -roll);
 	cross(crossed, rotated, m, factor >> 3);
+
+	rotate_rev(rotated, statica, yaw, -pitch, -roll);
+
 	/* Assuming |m| and |staticm| of about 0.4T,
 	 * crossed_n is about sin(angular distance) << 12
 	 */
+#define MAG_ROLLPITCH_PRIORITY 7
+#define ACCEL_ROLLPITCH_PRIORITY 6
 	yaw += (crossed[2] + 2) >> 2;
-	pitch -= (int32_t) crossed[1] << 5;
-	roll += (int32_t) crossed[0] << 5;
+	pitch -= (int32_t) crossed[1] << MAG_ROLLPITCH_PRIORITY;
+	roll += (int32_t) crossed[0] << MAG_ROLLPITCH_PRIORITY;
 
-	rotate_rev(rotated, statica, yaw, -pitch, -roll);
 	cross(crossed, rotated, a, 1);
 	yaw += (crossed[2] + 4) >> 3;
-	pitch -= (int32_t) crossed[1] << 7;
-	roll += (int32_t) crossed[0] << 7;
+	pitch -= (int32_t) crossed[1] << ACCEL_ROLLPITCH_PRIORITY;
+	roll += (int32_t) crossed[0] << ACCEL_ROLLPITCH_PRIORITY;
 #ifdef CAL
 	if (!(ahrs_pitch & 7)) {
 		serial_write_hex16(m[0]);
