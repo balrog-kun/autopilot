@@ -11,3 +11,7 @@ void ahrs_init(void);
 extern volatile int32_t ahrs_pitch, ahrs_roll;
 extern volatile int16_t ahrs_yaw,
        ahrs_pitch_rate, ahrs_roll_rate, ahrs_yaw_rate;
+
+/* Other non-ahrs data while we're there */
+extern volatile int16_t accel_acceleration[3];
+extern volatile int32_t accel_velocity[3];

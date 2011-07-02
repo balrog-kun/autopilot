@@ -31,8 +31,29 @@
 #include "ahrs.h"
 #include "trig.h"
 
+/* Rotation angles around the axes of the coordinate system based on
+ * the initial (boot-up, whatever) orientation of the IMU -- currently
+ * this is simply the orientation of the CMPS09 sensor board rotated
+ * by some constant pre-calibrated angles (see cmps09.h).
+ *
+ * TODO: these angles should be calibrated on every boot-up so that
+ * the yaw axis aligns with the gravity vector for simplicity
+ * (calculations here should not depend on this in any way).
+ */
 volatile int32_t ahrs_pitch, ahrs_roll;
 volatile int16_t ahrs_yaw, ahrs_pitch_rate, ahrs_roll_rate, ahrs_yaw_rate;
+
+/* Acceleration is reported in the initial coordinate system rotated
+ * by the angles above so really it is the local coordinate system
+ * of the vehicle.  It should not include the gravitational
+ * acceleration.
+ *
+ * Velocity is estimated by simply integrating the acceleration and
+ * should not be relied on in any way.  It is again in the fixed "global"
+ * coordinate system set at system start.
+ */
+volatile int16_t accel_acceleration[3];
+volatile int32_t accel_velocity[3] = { 0, 0, 0 };
 
 static volatile int32_t rel_pitch, rel_roll;
 
@@ -273,7 +294,18 @@ static void vectors_update(void) {
 	ahrs_roll = roll;
 	ahrs_yaw_rate = yaw - ahrs_yaw;
 	ahrs_yaw = yaw;
+	accel_acceleration[0] = a[0] - rotated[0];
+	accel_acceleration[1] = a[1] - rotated[1];
+	accel_acceleration[2] = a[2] - rotated[2];
 	sei();
+
+	/* TODO: acceleration needs to be integrated using the time difference
+	 * like the rotation rates are.
+	 */
+	rotate(rotated, a, yaw, -pitch, -roll);
+	accel_velocity[0] += rotated[0] - statica[0];
+	accel_velocity[1] += rotated[1] - statica[1];
+	accel_velocity[2] += rotated[2] - statica[2];
 }
 
 void ahrs_init(void) {
