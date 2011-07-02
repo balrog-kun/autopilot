@@ -26,8 +26,8 @@ static inline void rotate(int16_t ret[3], int16_t v[3],
 
 	/* Roll */
 	c = cos_32_l(r), s = sin_32_l(r);
-	ret[1] = ((int32_t) v[1] * c + (int32_t) v[2] * s + 0x3fff) >> 15;
-	ret[2] = ((int32_t) v[2] * c - (int32_t) v[1] * s + 0x3fff) >> 15;
+	ret[1] = ((int32_t) v[1] * c - (int32_t) v[2] * s + 0x3fff) >> 15;
+	ret[2] = ((int32_t) v[2] * c + (int32_t) v[1] * s + 0x3fff) >> 15;
 	/* Pitch */
 	c = cos_32_l(p), s = sin_32_l(p);
 	x = ((int32_t) v[0] * c - (int32_t) ret[2] * s + 0x3fff) >> 15;
