@@ -230,12 +230,8 @@ enum modes_e {
 	/* TODO: Cyclic stick controls the camera pan&tilt instead of the
 	 * vehicle's attitude */
 	MODE_PANTILT_ENABLE,
-	/* TODO: Emergency land or return home */
+	/* TODO: Emergency land or return home, panic, scream! */
 	MODE_EMERGENCY,
-	/* TODO: Enable accelerometer-based position / velocity hold,
-	 * (position hold == velocity hold at 0 velocity), don't expect
-	 * wonders from this mode though */
-	MODE_VELOCITYHOLD_ENABLE,
 };
 static uint8_t modes =
 	(0 << MODE_MOTORS_ARMED) |
@@ -243,8 +239,7 @@ static uint8_t modes =
 	(0 << MODE_ADAPTIVE_ENABLE) |
 	(0 << MODE_AUTONEUTRAL_ENABLE) |
 	(0 << MODE_PANTILT_ENABLE) |
-	(0 << MODE_EMERGENCY) |
-	(0 << MODE_VELOCITYHOLD_ENABLE);
+	(0 << MODE_EMERGENCY);
 #define SET_ONLY 0
 
 static void modes_update(void) {
@@ -259,57 +254,7 @@ static void modes_update(void) {
 	modes |= prev_sw << num;
 }
 
-static void constants_update(void) {
-	/* TODO: update statistics on motor thrust based on:
-	 *  # rotation rate in the previous instant
-	 *  # rotation rate now
-	 *  # level of motor signal filtered over the last 100ms or so
-	 *  # potentially the attitude then and now?
-	 * should the model be OUT = a * IN + b or OUT = lookup_table[IN]?
-	 */
-}
 static int constants_cnt = 0;
-
-static void velocityhold_ctrl_update(int16_t *dest_pitch, int16_t *dest_roll,
-		int16_t current_pitch, int16_t current_roll,
-		int16_t current_yaw) {
-	int16_t v[3], a[3];
-	int16_t c, s;
-	static int16_t accel[3] = { 0, 0, 0 }, att[2] = { 0, 0 };
-
-	/* TODO: clamp */
-	/* What's out current horiz velocity in the local coordinate system */
-	c = cos_16_l(-current_yaw), s = sin_16_l(-current_yaw);
-	v[0] = (accel_velocity[0] * c + accel_velocity[1] * s + 0x3fff) >> 15;
-	v[1] = (accel_velocity[1] * c - accel_velocity[0] * s + 0x3fff) >> 15;
-	v[2] = accel_velocity[2];
-
-	/* What we want our velocity to be */
-	/* *dest_pitch, *dest_roll have the stick nick values */
-
-	/* What's our acceleration */
-	accel[0] = (accel[0] >> 1) + (accel_acceleration[0] >> 1);
-	accel[1] = (accel[1] >> 1) + (accel_acceleration[1] >> 1);
-	accel[2] = (accel[2] >> 1) + (accel_acceleration[2] >> 1);
-
-	/* What we want our acceleration to be (TODO: scale) */
-	v[0] = v[0] - *dest_pitch;
-	v[1] = v[1] - *dest_roll;
-	/* TODO: v[2] = v[2] - *dest_throttle; */
-
-	/* How much do they differ */
-	a[0] = accel[0] - v[0];
-	a[1] = accel[1] - v[1];
-	a[2] = accel[2] - v[2];
-
-	/* What's our current attitude TODO: filter? */
-	att[0] = current_pitch;
-	att[1] = current_roll;
-
-	/* What we want our attitude to be TODO: rotate */
-	*dest_pitch = a[0] - att[0];
-	*dest_roll = a[1] - att[1];
-}
 
 static void control_update(void) {
 	int16_t cur_pitch, cur_roll, cur_yaw, raw_pitch, raw_roll;
@@ -343,8 +288,7 @@ static void control_update(void) {
 
 	/* Yaw stick deadband in heading-hold mode */
 	if ((modes & (1 << MODE_HEADINGHOLD_ENABLE)) ||
-			(modes & (1 << MODE_ADAPTIVE_ENABLE)) ||
-			(modes & (1 << MODE_VELOCITYHOLD_ENABLE))) {
+			(modes & (1 << MODE_ADAPTIVE_ENABLE))) {
 		co_right += 0x80 - yaw_deadband_pos;
 		if (co_right >= 0x80 - 3 && co_right <= 0x80 + 3)
 			co_right = 0x80;
@@ -356,7 +300,7 @@ static void control_update(void) {
 		yaw_deadband_pos = co_right;
 
 	/* Roll stick deadband in velocity-hold mode */
-	if (modes & (1 << MODE_VELOCITYHOLD_ENABLE)) {
+	if (modes & (1 << MODE_AUTONEUTRAL_ENABLE)) {
 		cy_right += 0x80 - pitch_deadband_pos;
 		if (cy_right >= 0x80 - 3 && cy_right <= 0x80 + 3)
 			cy_right = 0x80;
@@ -368,7 +312,7 @@ static void control_update(void) {
 		roll_deadband_pos = cy_right;
 
 	/* Pitch stick deadband in velocity-hold mode */
-	if (modes & (1 << MODE_VELOCITYHOLD_ENABLE)) {
+	if (modes & (1 << MODE_AUTONEUTRAL_ENABLE)) {
 		cy_front += 0x80 - pitch_deadband_pos;
 		if (cy_front >= 0x80 - 3 && cy_front <= 0x80 + 3)
 			cy_front = 0x80;
@@ -419,10 +363,6 @@ static void control_update(void) {
 	 * approximate with (dest-cur_pitch / 90 + dest-cur_roll / 90) for now
 	 */
 	base_throttle = co_throttle << 7;
-
-	if (modes & (1 << MODE_VELOCITYHOLD_ENABLE))
-		velocityhold_ctrl_update(&dest_pitch, &dest_roll,
-				raw_pitch, raw_roll, cur_yaw);
 
 	dest_pitch = -(cur_pitch + dest_pitch) / 1;
 	dest_roll = -(cur_roll + dest_roll) / 1;
@@ -629,10 +569,8 @@ static void control_update(void) {
 	actuator_set(2, (uint16_t) c);
 	actuator_set(3, (uint16_t) d);
 
-	if (constants_cnt ++ >= 25) { /* About half a sec */
+	if (constants_cnt ++ >= 25) /* About half a sec */
 		constants_cnt = 0;
-		constants_update();
-	}
 }
 
 static void send_debug_info(void) {
