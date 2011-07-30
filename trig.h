@@ -70,3 +70,8 @@ static inline uint32_t hypot3(int16_t v[3]) {
 	return (int32_t) v[0] * v[0] + (int32_t) v[1] * v[1] +
 		(int32_t) v[2] * v[2];
 }
+
+/* Rotate_rev { 0, 0, 1 } and return z */
+static inline int16_t rotate_z(int16_t y, int32_t p, int32_t r) {
+	return ((int32_t) cos_32_l(-p) * cos_32_l(-r) + 0x3fff) >> 15;
+}

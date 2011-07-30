@@ -258,7 +258,7 @@ static int constants_cnt = 0;
 
 static void control_update(void) {
 	int16_t cur_pitch, cur_roll, cur_yaw, raw_pitch, raw_roll;
-	int16_t dest_pitch, dest_roll, dest_yaw, base_throttle;
+	int16_t dest_pitch, dest_roll, dest_yaw, base_throttle, z;
 
 	static uint8_t yaw_deadband_pos = 0x80;
 	static uint8_t roll_deadband_pos = 0x80;
@@ -359,10 +359,18 @@ static void control_update(void) {
 	neutral_yaw += ((int16_t) co_right << 2) - (128 << 2);
 	dest_yaw = neutral_yaw;
 
-	/* TODO: divide by cos(angle from neutral), which we can probably
-	 * approximate with (dest-cur_pitch / 90 + dest-cur_roll / 90) for now
-	 */
 	base_throttle = co_throttle << 7;
+	/* Adjust throttle for the current tilt so we don't lose altitude
+	 * whenever accelerating.  */
+	z = rotate_z(cur_yaw, -cur_pitch, -cur_roll);
+	if (z < 0) {
+		if (base_throttle > 0x3000)
+			base_throttle = 0x3000; /* XXX */
+	} else {
+		if (z < (1 << 14))
+			z = 1 << 14;
+		base_throttle = ((uint32_t) base_throttle << 15) / z;
+	}
 
 	dest_pitch = -(cur_pitch + dest_pitch) / 1;
 	dest_roll = -(cur_roll + dest_roll) / 1;
