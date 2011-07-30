@@ -15,9 +15,21 @@
 #include "twi.h"
 #include "cmps09.h"
 #include "ahrs.h"
+#include "trig.h"
 #include "isqrt.h"
 
 static uint8_t motor[4] = { 0, 0, 0, 0 };
+static uint8_t debug = 0x00;
+static uint8_t prev_sw = 0;
+enum debug_e {
+	DEBUG_ATTITUDE,
+	DEBUG_VELOCITY,
+	DEBUG_ACCELERATION,
+	DEBUG_MAGNETIC,
+	DEBUG_RX,
+	DEBUG_MOTORS,
+	DEBUG_BAT_N_TEMP,
+};
 
 static void show_state(void) {
 	serial_write_dec8(motor[0]);
@@ -55,6 +67,9 @@ static void handle_input(char ch) {
 		MOTOR_UP(2);
 	case 'r':
 		MOTOR_UP(3);
+	case '1' ... '8':
+		debug ^= 1 << (ch - '1');
+		break;
 	default:
 		return;
 	}
@@ -63,14 +78,14 @@ static void handle_input(char ch) {
 	show_state();
 }
 
-void nop(void) {}
-void die(void) {
+static void nop(void) {}
+static void die(void) {
 	cli();
 	serial_write_str("ERROR");
 	while (1);
 }
 
-void setup(void) {
+static void setup(void) {
 	uint8_t s = SREG;
 	uint8_t m = MCUCR;
 	uint8_t ver, cnt, regs[6];
@@ -114,6 +129,7 @@ void setup(void) {
 	serial_write_str("CPU temperature:");
 	/* Reference volatage is 1.1V now */
 	serial_write_fp32((adc_values[4] - 269) * 1100, 0x400);
+	serial_write1('C');
 	serial_write_eol();
 
 	ver = 0xff;
@@ -172,13 +188,13 @@ void setup(void) {
 	serial_write_fp32(len, 0x4050);
 	serial_write_str(" g");
 	serial_write_eol();
-	if (len > 0x4070 || len < 0x3f00)
+	if (len > 0x4170 || len < 0x3f00)
 		die();
 
 	serial_write_str("Receiver signal: ");
 	serial_write_str(rx_no_signal ? "NOPE" : "yep");
 	serial_write_eol();
-	if (!rx_no_signal && rx_co_throttle > 5) {
+	if (rx_no_signal || rx_co_throttle > 5 || rx_gyro_sw) {
 		serial_write_str("Throttle stick is not in the bottom "
 				"position\r\n");
 		die();
@@ -193,6 +209,7 @@ void setup(void) {
 	serial_write_str("AHRS loop and actuator signals are running\r\n");
 
 	show_state();
+	prev_sw = rx_gyro_sw;
 }
 
 /* The modes are a set of boolean switches that can be set or reset/cleared
@@ -201,47 +218,114 @@ void setup(void) {
  * right side of the transmitter.
  */
 enum modes_e {
-	/* TODO: Arm/disarm the motors, too risky? */
+	/* Arm/disarm the motors (dangerous!) */
 	MODE_MOTORS_ARMED,
 	/* Enable compass-based heading-hold, pitch/roll hold is always on */
 	MODE_HEADINGHOLD_ENABLE,
+	/* Adaptively change motor output differences, don't use absolute
+	 * values.  HEADINGHOLD is forced on when this is on.  */
+	MODE_ADAPTIVE_ENABLE,
+	/* Try to keep enhancing the neutral attitude based on acceleration */
+	MODE_AUTONEUTRAL_ENABLE,
+	/* TODO: Cyclic stick controls the camera pan&tilt instead of the
+	 * vehicle's attitude */
+	MODE_PANTILT_ENABLE,
+	/* TODO: Emergency land or return home */
+	MODE_EMERGENCY,
 	/* TODO: Enable accelerometer-based position / velocity hold,
 	 * (position hold == velocity hold at 0 velocity), don't expect
 	 * wonders from this mode though */
 	MODE_VELOCITYHOLD_ENABLE,
-	/* TODO: Cyclic stick controls the camera pan&tilt instead of the
-	 * vehicle's attitude */
-	MODE_PANTILT_ENABLE,
 };
 static uint8_t modes =
 	(0 << MODE_MOTORS_ARMED) |
 	(0 << MODE_HEADINGHOLD_ENABLE) |
-	(0 << MODE_VELOCITYHOLD_ENABLE) |
-	(0 << MODE_PANTILT_ENABLE);
-static uint8_t prev_sw = 0;
+	(0 << MODE_ADAPTIVE_ENABLE) |
+	(0 << MODE_AUTONEUTRAL_ENABLE) |
+	(0 << MODE_PANTILT_ENABLE) |
+	(0 << MODE_EMERGENCY) |
+	(0 << MODE_VELOCITYHOLD_ENABLE);
+#define SET_ONLY 0
 
-static uint8_t yaw_deadband_pos = 0x80;
-static uint8_t roll_deadband_pos = 0x80;
-static uint8_t pitch_deadband_pos = 0x80;
-
-void modes_update(void) {
+static void modes_update(void) {
 	uint8_t num;
 
-	if (rx_gyro_sw == prev_sw)
+	if (likely(rx_gyro_sw == prev_sw))
 		return;
 	prev_sw = rx_gyro_sw;
 
 	num = ((uint16_t) rx_right_pot + 36) / 49;
-	modes &= 1 << num;
+	modes &= ~(1 << num) | SET_ONLY;
 	modes |= prev_sw << num;
 }
 
-void control_update(void) {
-	int16_t cur_pitch, cur_roll, cur_yaw;
+static void constants_update(void) {
+	/* TODO: update statistics on motor thrust based on:
+	 *  # rotation rate in the previous instant
+	 *  # rotation rate now
+	 *  # level of motor signal filtered over the last 100ms or so
+	 *  # potentially the attitude then and now?
+	 * should the model be OUT = a * IN + b or OUT = lookup_table[IN]?
+	 */
+}
+static int constants_cnt = 0;
+
+static void velocityhold_ctrl_update(int16_t *dest_pitch, int16_t *dest_roll,
+		int16_t current_pitch, int16_t current_roll,
+		int16_t current_yaw) {
+	int16_t v[3], a[3];
+	int16_t c, s;
+	static int16_t accel[3] = { 0, 0, 0 }, att[2] = { 0, 0 };
+
+	/* TODO: clamp */
+	/* What's out current horiz velocity in the local coordinate system */
+	c = cos_16_l(-current_yaw), s = sin_16_l(-current_yaw);
+	v[0] = (accel_velocity[0] * c + accel_velocity[1] * s + 0x3fff) >> 15;
+	v[1] = (accel_velocity[1] * c - accel_velocity[0] * s + 0x3fff) >> 15;
+	v[2] = accel_velocity[2];
+
+	/* What we want our velocity to be */
+	/* *dest_pitch, *dest_roll have the stick nick values */
+
+	/* What's our acceleration */
+	accel[0] = (accel[0] >> 1) + (accel_acceleration[0] >> 1);
+	accel[1] = (accel[1] >> 1) + (accel_acceleration[1] >> 1);
+	accel[2] = (accel[2] >> 1) + (accel_acceleration[2] >> 1);
+
+	/* What we want our acceleration to be (TODO: scale) */
+	v[0] = v[0] - *dest_pitch;
+	v[1] = v[1] - *dest_roll;
+	/* TODO: v[2] = v[2] - *dest_throttle; */
+
+	/* How much do they differ */
+	a[0] = accel[0] - v[0];
+	a[1] = accel[1] - v[1];
+	a[2] = accel[2] - v[2];
+
+	/* What's our current attitude TODO: filter? */
+	att[0] = current_pitch;
+	att[1] = current_roll;
+
+	/* What we want our attitude to be TODO: rotate */
+	*dest_pitch = a[0] - att[0];
+	*dest_roll = a[1] - att[1];
+}
+
+static void control_update(void) {
+	int16_t cur_pitch, cur_roll, cur_yaw, raw_pitch, raw_roll;
 	int16_t dest_pitch, dest_roll, dest_yaw, base_throttle;
-	static int16_t set_yaw = 0;
+
+	static uint8_t yaw_deadband_pos = 0x80;
+	static uint8_t roll_deadband_pos = 0x80;
+	static uint8_t pitch_deadband_pos = 0x80;
+
+	static int16_t neutral_pitch = 0;
+	static int16_t neutral_roll = 0;
+	static int16_t neutral_yaw = 0;
+
 	uint8_t co_right = rx_co_right, cy_right = rx_cy_right,
-		cy_front = rx_cy_front;
+		cy_front = rx_cy_front, co_throttle = rx_co_throttle;
+
 	/* Motors (top view):
 	 * (A)_   .    _(B)
 	 *    '#_ .  _#'
@@ -255,8 +339,11 @@ void control_update(void) {
 	 */
 	int32_t a, b, c, d;
 
+	rx_no_signal = (rx_no_signal < 255) ? rx_no_signal + 1 : 255;
+
 	/* Yaw stick deadband in heading-hold mode */
 	if ((modes & (1 << MODE_HEADINGHOLD_ENABLE)) ||
+			(modes & (1 << MODE_ADAPTIVE_ENABLE)) ||
 			(modes & (1 << MODE_VELOCITYHOLD_ENABLE))) {
 		co_right += 0x80 - yaw_deadband_pos;
 		if (co_right >= 0x80 - 3 && co_right <= 0x80 + 3)
@@ -293,10 +380,29 @@ void control_update(void) {
 		pitch_deadband_pos = cy_front;
 
 	cli();
-	cur_pitch = (ahrs_pitch >> 16) + (ahrs_pitch_rate >> 2);
-	cur_roll = (ahrs_roll >> 16) + (ahrs_roll_rate >> 2);
-	cur_yaw = ahrs_yaw + (ahrs_yaw_rate << 1);
+	raw_pitch = (ahrs_pitch + 32768) >> 16;
+	raw_roll = (ahrs_roll + 32768) >> 16;
+	cur_pitch = raw_pitch + ((ahrs_pitch_rate + 2) >> 2);
+	cur_roll = raw_roll + ((ahrs_roll_rate + 2) >> 2);
+	cur_yaw = ahrs_yaw + (ahrs_yaw_rate << 5);
 	sei();
+
+	if (modes & (1 << MODE_AUTONEUTRAL_ENABLE)) {
+		/* TODO */
+		if (raw_pitch > neutral_pitch && accel_acceleration[0] < 0)
+			neutral_pitch -= accel_acceleration[0] *
+				(raw_pitch - neutral_pitch);
+		if (raw_pitch < neutral_pitch && accel_acceleration[0] > 0)
+			neutral_pitch += accel_acceleration[0] *
+				(raw_pitch - neutral_pitch);
+
+		if (raw_roll > neutral_roll && accel_acceleration[1] < 0)
+			neutral_roll -= accel_acceleration[1] *
+				(raw_roll - neutral_roll);
+		if (raw_roll < neutral_roll && accel_acceleration[1] > 0)
+			neutral_roll += accel_acceleration[1] *
+				(raw_roll - neutral_roll);
+	}
 
 	if (modes & (1 << MODE_PANTILT_ENABLE)) {
 		co_right = 0x80;
@@ -304,17 +410,27 @@ void control_update(void) {
 		cy_front = 0x80;
 	}
 
-	dest_pitch = ((int16_t) cy_front << 5) - (128 << 5);
-	dest_roll = ((int16_t) cy_right << 5) - (128 << 5);
-	set_yaw += ((int16_t) co_right << 2) - (128 << 2);
-	dest_yaw = set_yaw;
+	dest_pitch = neutral_pitch + ((int16_t) cy_front << 5) - (128 << 5);
+	dest_roll = neutral_roll + ((int16_t) cy_right << 5) - (128 << 5);
+	neutral_yaw += ((int16_t) co_right << 2) - (128 << 2);
+	dest_yaw = neutral_yaw;
 
-	base_throttle = rx_co_throttle << 7;
+	/* TODO: divide by cos(angle from neutral), which we can probably
+	 * approximate with (dest-cur_pitch / 90 + dest-cur_roll / 90) for now
+	 */
+	base_throttle = co_throttle << 7;
+
+	if (modes & (1 << MODE_VELOCITYHOLD_ENABLE))
+		velocityhold_ctrl_update(&dest_pitch, &dest_roll,
+				raw_pitch, raw_roll, cur_yaw);
 
 	dest_pitch = -(cur_pitch + dest_pitch) / 1;
 	dest_roll = -(cur_roll + dest_roll) / 1;
-	dest_yaw = cur_yaw - dest_yaw;
+	dest_yaw = -(cur_yaw - dest_yaw) / 1;
 
+	dest_yaw <<= 2;
+
+#if 0
 	/* Some easing */
 	if (dest_pitch < 0x400 && dest_pitch > -0x400)
 		dest_pitch >>= 2;
@@ -328,6 +444,7 @@ void control_update(void) {
 		dest_roll -= 0x300;
 	else
 		dest_roll += 0x300;
+#endif
 
 #define CLAMP(x, mi, ma)	\
 	if (x < mi)		\
@@ -336,43 +453,251 @@ void control_update(void) {
 		x = ma;
 
 	if (modes & (1 << MODE_HEADINGHOLD_ENABLE)) {
-		CLAMP(dest_yaw, -0x800, 0x800)
+		CLAMP(dest_yaw, -0xc00, 0xc00);
 	} else {
 		dest_yaw = (128 << 5) - ((int16_t) co_right << 5);
-		set_yaw = cur_yaw;
+		if (modes & (1 << MODE_ADAPTIVE_ENABLE)) {
+			dest_yaw -= ahrs_yaw_rate << 4;
+			CLAMP(dest_yaw, -0xc00, 0xc00);
+		}
+		neutral_yaw = cur_yaw;
 	}
 
-	/* TODO: keep track of the motor feedback (through ahrs_pitch_rate
-	 * and ahrs_roll_rate) for each motor and scale accordingly.
-	 */
+	if (modes & (1 << MODE_ADAPTIVE_ENABLE)) {
+#if 0
+		static int16_t prev_diff_pitch = 0;
+		static int16_t prev_diff_roll = 0;
+		int16_t diff[4];
 
-	a = (int32_t) base_throttle + dest_pitch + dest_roll + dest_yaw;
-	b = (int32_t) base_throttle - dest_pitch + dest_roll - dest_yaw;
-	c = (int32_t) base_throttle + dest_pitch - dest_roll - dest_yaw;
-	d = (int32_t) base_throttle - dest_pitch - dest_roll + dest_yaw;
-	CLAMP(a, 0, 32000);
-	CLAMP(b, 0, 32000);
-	CLAMP(c, 0, 32000);
-	CLAMP(d, 0, 32000);
+		prev_diff_pitch += dest_pitch >> 4;
+		prev_diff_roll += dest_roll >> 4;
+
+		dest_pitch = prev_diff_pitch;
+		dest_roll = prev_diff_roll;
+#else
+		/* Our motors are currently modelled as OUTPUT = a * INPUT,
+		 * TODO: use the OUTPUT = b + a * INPUT or the
+		 * OUTPUT = gain_lut[INPUT] model.
+		 */
+		static int16_t throttle_base[4] = { 0, -0x1000, 0, 0 };
+		static int16_t throttle_diff[4] = { 0, -0x1000, 0, 0 };
+
+#define Q_LEN	16
+		static uint8_t q_idx = 0;
+		static int32_t motor_input[4][Q_LEN];
+		static int16_t pitch_rates[Q_LEN],
+			       roll_rates[Q_LEN], yaw_rates[Q_LEN];
+
+		int16_t diff[4], sum;
+		uint8_t q_next;
+		int32_t pitch_gain, roll_gain, yaw_gain;
+		int32_t motor_gain[4][2];
+#endif
+
+		diff[0] = 0 + dest_pitch + dest_roll + dest_yaw;
+		diff[1] = 0 - dest_pitch + dest_roll - dest_yaw;
+		diff[2] = 0 + dest_pitch - dest_roll - dest_yaw;
+		diff[3] = 0 - dest_pitch - dest_roll + dest_yaw;
+
+		a = ((((int32_t) base_throttle * ((int32_t) throttle_base[0] +
+							0x4000)) >> 1) +
+				(int32_t) diff[0] *
+				(throttle_diff[0] + 0x2000)) >> 13;
+		b = ((((int32_t) base_throttle * ((int32_t) throttle_base[1] +
+							0x4000)) >> 1) +
+				(int32_t) diff[1] *
+				(throttle_diff[1] + 0x2000)) >> 13;
+		c = ((((int32_t) base_throttle * ((int32_t) throttle_base[2] +
+							0x4000)) >> 1) +
+				(int32_t) diff[2] *
+				(throttle_diff[2] + 0x2000)) >> 13;
+		d = ((((int32_t) base_throttle * ((int32_t) throttle_base[3] +
+							0x4000)) >> 1) +
+				(int32_t) diff[3] *
+				(throttle_diff[3] + 0x2000)) >> 13;
+
+		q_next = (q_idx + 1) & 15;
+		/* XXX: would it be better to use ahrs_pitch difference
+		 * instead of ahrs_pitch_rate? */
+		pitch_rates[q_next] = ahrs_pitch_rate;
+		roll_rates[q_next] = ahrs_roll_rate;
+		yaw_rates[q_next] = ahrs_yaw_rate;
+		motor_input[0][q_next] = motor_input[0][q_idx] + diff[0];
+		motor_input[1][q_next] = motor_input[1][q_idx] + diff[1];
+		motor_input[2][q_next] = motor_input[2][q_idx] + diff[2];
+		motor_input[3][q_next] = motor_input[3][q_idx] + diff[3];
+		q_idx = q_next;
+
+		/* Calculate the control loop gain over about 150ms */
+#define DIFF_START (Q_LEN - 12)
+#define DIFF_END   (Q_LEN - 0)
+#define DIFF_OFF   3
+		pitch_gain = pitch_rates[(q_idx + DIFF_END) & 15] -
+			pitch_rates[(q_idx + DIFF_START) & 15];
+		roll_gain = roll_rates[(q_idx + DIFF_END) & 15] -
+			roll_rates[(q_idx + DIFF_START) & 15];
+		yaw_gain = yaw_rates[(q_idx + DIFF_END) & 15] -
+			yaw_rates[(q_idx + DIFF_START) & 15];
+		/* TODO: detect or calculate the right value based on
+		 * the propeller parameters.  The problem with hardcoding
+		 * any value is that it won't account for any tilt of
+		 * the motor shaft due to construction characteristics or
+		 * physical wear */
+		yaw_gain <<= 4;
+
+		motor_gain[0][0] =
+			motor_input[0][(q_idx + DIFF_END - DIFF_OFF) & 15] -
+			motor_input[0][(q_idx + DIFF_START - DIFF_OFF) & 15];
+		motor_gain[1][0] =
+			motor_input[1][(q_idx + DIFF_END - DIFF_OFF) & 15] -
+			motor_input[1][(q_idx + DIFF_START - DIFF_OFF) & 15];
+		motor_gain[2][0] =
+			motor_input[2][(q_idx + DIFF_END - DIFF_OFF) & 15] -
+			motor_input[2][(q_idx + DIFF_START - DIFF_OFF) & 15];
+		motor_gain[3][0] =
+			motor_input[3][(q_idx + DIFF_END - DIFF_OFF) & 15] -
+			motor_input[3][(q_idx + DIFF_START - DIFF_OFF) & 15];
+		motor_gain[0][1] = 0 + pitch_gain + roll_gain + yaw_gain;
+		motor_gain[1][1] = 0 - pitch_gain + roll_gain - yaw_gain;
+		motor_gain[2][1] = 0 + pitch_gain - roll_gain - yaw_gain;
+		motor_gain[3][1] = 0 - pitch_gain - roll_gain + yaw_gain;
+		motor_gain[0][1] -= (motor_gain[0][0] + 16) >> 5;
+		motor_gain[1][1] -= (motor_gain[1][0] + 16) >> 5;
+		motor_gain[2][1] -= (motor_gain[2][0] + 16) >> 5;
+		motor_gain[3][1] -= (motor_gain[3][0] + 16) >> 5;
+
+		/* Update the factors */
+#define MGAIN 0x800
+
+		sum = (throttle_diff[0] + throttle_diff[1] +
+				throttle_diff[2] + throttle_diff[3] + 2) >> 2;
+		if (motor_gain[0][0] > MGAIN || motor_gain[0][0] < -MGAIN) {
+			if (motor_gain[0][0] > 0)
+				motor_gain[0][1] = -motor_gain[0][1];
+			throttle_diff[0] += ((motor_gain[0][1] + 512) >> 10) -
+				sum;
+			CLAMP(throttle_diff[0], -0x1800, 0x4000);
+		}
+		if (motor_gain[1][0] > MGAIN || motor_gain[1][0] < -MGAIN) {
+			if (motor_gain[1][0] > 0)
+				motor_gain[1][1] = -motor_gain[1][1];
+			throttle_diff[1] += ((motor_gain[1][1] + 512) >> 10) -
+				sum;
+			CLAMP(throttle_diff[1], -0x1800, 0x4000);
+		}
+		if (motor_gain[2][0] > MGAIN || motor_gain[2][0] < -MGAIN) {
+			if (motor_gain[2][0] > 0)
+				motor_gain[2][1] = -motor_gain[2][1];
+			throttle_diff[2] += ((motor_gain[2][1] + 512) >> 10) -
+				sum;
+			CLAMP(throttle_diff[2], -0x1800, 0x4000);
+		}
+		if (motor_gain[3][0] > MGAIN || motor_gain[3][0] < -MGAIN) {
+			if (motor_gain[3][0] > 0)
+				motor_gain[3][1] = -motor_gain[3][1];
+			throttle_diff[3] += ((motor_gain[3][1] + 512) >> 10) -
+				sum;
+			CLAMP(throttle_diff[3], -0x1800, 0x4000);
+		}
+
+		sum = (throttle_base[0] + throttle_base[1] +
+				throttle_base[2] + throttle_base[3] + 2) >> 2;
+		throttle_base[0] += ((diff[0] + 32) >> 6) - sum;
+		throttle_base[1] += ((diff[1] + 32) >> 6) - sum;
+		throttle_base[2] += ((diff[2] + 32) >> 6) - sum;
+		throttle_base[3] += ((diff[3] + 32) >> 6) - sum;
+		CLAMP(throttle_base[0], -0x1800, 0x4000);
+		CLAMP(throttle_base[1], -0x1800, 0x4000);
+		CLAMP(throttle_base[2], -0x1800, 0x4000);
+		CLAMP(throttle_base[3], -0x1800, 0x4000);
+	} else {
+		a = (int32_t) base_throttle + dest_pitch + dest_roll + dest_yaw;
+		b = (int32_t) base_throttle - dest_pitch + dest_roll - dest_yaw;
+		c = (int32_t) base_throttle + dest_pitch - dest_roll - dest_yaw;
+		d = (int32_t) base_throttle - dest_pitch - dest_roll + dest_yaw;
+		/* HACK */
+		b = ((b * 5) >> 3) - 6;
+	}
+	CLAMP(a, 0, 40000);
+	CLAMP(b, 0, 25000);/* HACK */
+	CLAMP(c, 0, 40000);
+	CLAMP(d, 0, 40000);
+	if (unlikely(!(modes & (1 << MODE_MOTORS_ARMED))))
+		a = b = c = d = 0;
 	actuator_set(0, (uint16_t) a);
 	actuator_set(1, (uint16_t) b);
 	actuator_set(2, (uint16_t) c);
 	actuator_set(3, (uint16_t) d);
+
+	if (constants_cnt ++ >= 25) { /* About half a sec */
+		constants_cnt = 0;
+		constants_update();
+	}
 }
 
-void loop(void) {
+static void send_debug_info(void) {
+	if (debug & (1 << DEBUG_ATTITUDE)) {
+		serial_write_str("ATT");
+		serial_write_fp32(ahrs_pitch, ROLL_PITCH_180DEG / 180);
+		serial_write_fp32(ahrs_roll, ROLL_PITCH_180DEG / 180);
+		serial_write_fp32((int32_t) ahrs_yaw * 180, 32768);
+		serial_write_eol();
+	}
+	if (debug & (1 << DEBUG_VELOCITY)) {
+		serial_write_str("V");
+		serial_write_hex32(accel_velocity[0]);
+		serial_write_hex32(accel_velocity[1]);
+		serial_write_hex32(accel_velocity[2]);
+		serial_write_eol();
+	}
+	if (debug & (1 << DEBUG_ACCELERATION)) {
+		serial_write_str("ACC");
+		serial_write_hex16(accel_acceleration[0]);
+		serial_write_hex16(accel_acceleration[1]);
+		serial_write_hex16(accel_acceleration[2]);
+		serial_write_eol();
+	}
+	if (debug & (1 << DEBUG_MAGNETIC)) {
+		serial_write_str("MAG");
+		serial_write_eol();
+	}
+	if (debug & (1 << DEBUG_RX)) {
+		serial_write_str("RX");
+		serial_write_dec8(rx_no_signal - 1);
+		serial_write_hex16(rx_co_throttle);
+		serial_write_hex16(rx_co_right);
+		serial_write_hex16(rx_cy_front);
+		serial_write_hex16(rx_cy_right);
+		serial_write_dec8(rx_gyro_sw);
+		serial_write_eol();
+	}
+	if (debug & (1 << DEBUG_MOTORS)) {
+		serial_write_str("MOT");
+		serial_write_hex16(actuators[0]);
+		serial_write_hex16(actuators[1]);
+		serial_write_hex16(actuators[2]);
+		serial_write_hex16(actuators[3]);
+		serial_write_eol();
+	}
+	if (debug & (1 << DEBUG_BAT_N_TEMP)) {
+		serial_write_str("BAT");
+		serial_write_fp32((uint32_t) adc_values[3] * 323 * (991 + 241),
+				0x400L * 100 * 241);
+		serial_write1('V');
+		serial_write_fp32((adc_values[4] - 269) * 1100, 0x400);
+		serial_write1('C');
+		serial_write_eol();
+	}
+}
+
+static void loop(void) {
 	my_delay(20); /* 50Hz update rate */
 
 	modes_update();
 	control_update();
-#if 0
-	serial_write_fp32(ahrs_pitch, ROLL_PITCH_180DEG / 180);
-	serial_write_fp32(ahrs_roll, ROLL_PITCH_180DEG / 180);
-	serial_write_fp32((int32_t) ahrs_yaw * 180, 32768);
-	serial_write_eol();
-#endif
 
-	/* TODO: battery voltage check, send status over zigbee etc */
+	if (debug && (constants_cnt == 0 || constants_cnt == 12))
+		send_debug_info();
 }
 
 int main(void) {

@@ -267,13 +267,13 @@ static void vectors_update(void) {
 	 * crossed_n is about sin(angular distance) << 12
 	 */
 #define MAG_ROLLPITCH_PRIORITY 7
-#define ACCEL_ROLLPITCH_PRIORITY 6
+#define ACCEL_ROLLPITCH_PRIORITY 9
 	yaw += (crossed[2] + 2) >> 2;
 	pitch -= (int32_t) crossed[1] << MAG_ROLLPITCH_PRIORITY;
 	roll += (int32_t) crossed[0] << MAG_ROLLPITCH_PRIORITY;
 
 	cross(crossed, rotated, a, 1);
-	yaw += (crossed[2] + 4) >> 3;
+	yaw += (crossed[2] + 2) >> 2;
 	pitch -= (int32_t) crossed[1] << ACCEL_ROLLPITCH_PRIORITY;
 	roll += (int32_t) crossed[0] << ACCEL_ROLLPITCH_PRIORITY;
 #ifdef CAL
