@@ -93,9 +93,9 @@ enum {
 	CFG_NEUTRAL_X,
 	CFG_NEUTRAL_Y,
 	CFG_ROLLPITCH_P,
-	CFG_ROLLPITCH_I,
+	CFG_ROLLPITCH_D,
 	CFG_YAW_P,
-	CFG_YAW_I,
+	CFG_YAW_D,
 	CFG_ADAPTIVE_0,
 	CFG_ADAPTIVE_1,
 	CFG_ADAPTIVE_2,
@@ -123,10 +123,10 @@ static uint32_t config[16] = {
 #define neutral_y ((int32_t) config[CFG_NEUTRAL_Y])
 
 	[CFG_ROLLPITCH_P] = 3 * 32,
-	[CFG_ROLLPITCH_I] = 4 * 32 / 5,
+	[CFG_ROLLPITCH_D] = 4 * 32 / 5,
 
 	[CFG_YAW_P] = 16 * 32,
-	[CFG_YAW_I] = 0,
+	[CFG_YAW_D] = 0,
 };
 
 #define FLASH_END 0x8000
@@ -230,12 +230,12 @@ static void config_update(int co_right, int cy_right, int cy_front) {
 		config_save();
 		break;
 	case 2:
-		/* Cyclic stick right: Increase I by 3 */
-		config[CFG_ROLLPITCH_I] += 3;
+		/* Cyclic stick right: Increase D by 3 */
+		config[CFG_ROLLPITCH_D] += 3;
 		break;
 	case -2:
-		/* Cyclic stick left: Decrease I by 3 */
-		config[CFG_ROLLPITCH_I] -= 3;
+		/* Cyclic stick left: Decrease D by 3 */
+		config[CFG_ROLLPITCH_D] -= 3;
 		break;
 	case 3:
 		/* Cyclic stick front: Increase P by 10 */
@@ -583,15 +583,42 @@ static void control_update(void) {
 		 *
 		 * ahrs_roll_rate unit = 1 / 64 deg/s ~= 0.016 deg/s
 		 */
-		cur_pitch -= (ahrs_roll_rate *
-				(int16_t) (uint16_t)
-				config[CFG_ROLLPITCH_I]) / 32;
-		cur_yaw -= (ahrs_yaw_rate *
-				(int16_t) (uint16_t)
-				config[CFG_YAW_P]) / 32;
-		cur_roll += (ahrs_pitch_rate *
-				(int16_t) (uint16_t)
-				config[CFG_ROLLPITCH_I]) / 32;
+		{
+			static int32_t prev_roll_rate = 0;
+			static int32_t prev_yaw_rate = 0;
+			static int32_t prev_pitch_rate = 0;
+			int32_t roll_d, yaw_d, pitch_d;
+
+			/* Get the derivative */
+			roll_d = ahrs_roll_rate;
+			yaw_d = ahrs_yaw_rate;
+			pitch_d = ahrs_pitch_rate;
+
+			/*
+			 * Also add the second derivative.  With this I'm
+			 * not sure if this can be called a PID loop anymore,
+			 * but the second derivative is desirable because
+			 * not only the whole airship body has a momentum,
+			 * but also each propeller has a momentum of its
+			 * own which, within some range, helps the rigid
+			 * body maintain its angular acceleration.
+			 */
+			/* TODO: need to divide by time period */
+			roll_d += (ahrs_roll_rate - prev_roll_rate) / 4;
+			yaw_d += (ahrs_yaw_rate - prev_yaw_rate) / 4;
+			pitch_d += (ahrs_pitch_rate - prev_pitch_rate) / 4;
+
+			prev_roll_rate = ahrs_roll_rate;
+			prev_yaw_rate = ahrs_yaw_rate;
+			prev_pitch_rate = ahrs_pitch_rate;
+
+			cur_pitch -= (roll_d * (int16_t) (uint16_t)
+					config[CFG_ROLLPITCH_D]) / 32;
+			cur_yaw -= (yaw_d * (int16_t) (uint16_t)
+					config[CFG_YAW_P]) / 32;
+			cur_roll += (pitch_d * (int16_t) (uint16_t)
+					config[CFG_ROLLPITCH_D]) / 32;
+		}
 
 		dest_pitch = dest_pitch - cur_pitch;
 		dest_roll = dest_roll - cur_roll;
