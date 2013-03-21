@@ -53,6 +53,7 @@
 #include "l3g4200d.h"
 #include "adxl345.h"
 #include "hmc5883l.h"
+#include "bmp085.h"
 #include "ahrs.h"
 //#include "gps.h"
 //#include "adc.h"
@@ -317,6 +318,7 @@ static void setup(void) {
 	l3g4200d_init();
 	hmc5883l_init();
 	adxl345_init();
+	bmp085_init();
 	my_delay(200);
 	ahrs_init();
 
@@ -705,10 +707,13 @@ static void serial_write_bin32(uint32_t v) {
 #endif
 #endif
 
+static int32_t pressure = 0;
+
 int fps = 0;////
 static void status_update(void) {
 	if (ahrs_report) {
 #ifdef TEXT_DEBUG
+		serial_write_fp32((101300 - pressure) * 83, 1000);////
 		serial_write_hex16(fps);////
 		serial_write_hex32(timer_read());////
 		int16_t cur_x = (q1q3 - q0q2) * 4096.0f;
@@ -788,6 +793,7 @@ static uint32_t ts = 0;
 static void loop(void) {
 	static int counter = 0;
 	static unsigned int stopped = 0;
+	int32_t p;
 	fps ++;////
 
 	/* No set udpate rate, go as fast as possible */
@@ -805,9 +811,17 @@ static void loop(void) {
 	ahrs_update();
 	control_update();
 
-	if (counter > 10) { /* About every 0.5s */
+	if (counter > 10) { /* About every 0.2s */
 		counter = 0;
 		status_update();
+	}
+
+	p = bmp085_read();
+	if (p) {
+		if (pressure)
+			pressure += (p - pressure + 4) / 8;
+		else
+			pressure = p;
 	}
 
 	if (((modes >> MODE_PPM_STOP) & 1) != stopped) {
