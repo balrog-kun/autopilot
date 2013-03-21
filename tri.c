@@ -565,6 +565,10 @@ static void control_update(void) {
 					(int16_t) (uint16_t)
 					config[CFG_ROLLPITCH_P]) / 32;
 
+		/* Constrain the proportional factors */
+		CLAMP(cur_pitch, -2000, 2000);
+		CLAMP(cur_roll, -2000, 2000);
+
 		/* TODO: we need to build a quaternion out of ahrs_pitch_rate,
 		 * ahrs_roll_rate, ahrs_yaw_rate, and rotate [ 0, 0, 1 ] by the
 		 * product of the two quaternions instead.
