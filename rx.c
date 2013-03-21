@@ -128,14 +128,22 @@ static void rx_tgy9x_update(void) {
 	SCALE(rx_cy_right, rx_ch[2])
 	SCALE(rx_co_right, rx_ch[3])
 
-	if (rx_ch[4] > CLK_PART(0.55)) {
+	/* Tgy9x config:
+	 * CH1 Ele  100
+	 * CH2 Ail  100
+	 * CH3 Thr  100
+	 * CH4 Rud  100
+	 * CH5 GEA   60   Offset 0
+	 *  += 3POS  40   Offset -20
+	 */
+	if (rx_ch[4] > CLK_PART(0.445)) {
 		rx_gear_sw = 1;
-		ch5 = rx_ch[4] - CLK_PART(0.55) + CLK_MIN;
+		ch5 = rx_ch[4] - CLK_PART(0.675) + CLK_MIN;
 	} else {
 		rx_gear_sw = 0;
 		ch5 = rx_ch[4];
 	}
-	rx_id_sw = ch5 > CLK_PART(0.2 * 0.5) ? ch5 > CLK_PART(0.4 * 0.75) ?
+	rx_id_sw = ch5 > CLK_PART(0.01) ? ch5 > CLK_PART(0.217) ?
 		2 : 1 : 0;
 
 	rx_no_signal = 0;
