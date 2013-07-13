@@ -911,8 +911,8 @@ static void control_update(void) {
 					config[CFG_ROLLPITCH_P]) / 32;
 
 		/* Constrain the proportional factors */
-		CLAMP(cur_pitch, -2000, 2000);
-		CLAMP(cur_roll, -2000, 2000);
+		CLAMP(cur_pitch, -2500, 2500);
+		CLAMP(cur_roll, -2500, 2500);
 
 		/* TODO: we need to build a quaternion out of ahrs_pitch_rate,
 		 * ahrs_roll_rate, ahrs_yaw_rate, and rotate [ 0, 0, 1 ] by the
@@ -937,6 +937,7 @@ static void control_update(void) {
 			static int32_t prev_yaw_rate = 0;
 			static int32_t prev_pitch_rate = 0;
 			int32_t roll_d, yaw_d, pitch_d;
+			int16_t pid_d;
 
 			/* Get the derivative */
 			roll_d = ahrs_roll_rate;
@@ -961,12 +962,14 @@ static void control_update(void) {
 			prev_yaw_rate = ahrs_yaw_rate;
 			prev_pitch_rate = ahrs_pitch_rate;
 
-			cur_pitch -= (roll_d * (int16_t) (uint16_t)
-					config[CFG_ROLLPITCH_D]) / 32;
+			/* Temporary until D auto-tuning works: */
+			pid_d = (int16_t) (uint16_t) config[CFG_ROLLPITCH_D];
+			pid_d <<= rx_id_sw;
+
+			cur_pitch -= (roll_d * pid_d) / 32;
 			cur_yaw -= (yaw_d * (int16_t) (uint16_t)
 					config[CFG_YAW_P]) / 32;
-			cur_roll += (pitch_d * (int16_t) (uint16_t)
-					config[CFG_ROLLPITCH_D]) / 32;
+			cur_roll += (pitch_d * pid_d) / 32;
 		}
 
 		dest_pitch = dest_pitch - cur_pitch;
@@ -977,7 +980,7 @@ static void control_update(void) {
 	/* 7 / 8 is about 3 / 2 / sqrt(3) which is 1 / arm length for pitch. */
 	ldiff = -dest_pitch * 7 / 8 + dest_roll; // + dest_yaw * 0.001
 	rdiff = -dest_pitch * 7 / 8 - dest_roll; // - dest_yaw * 0.001
-	bdiff = dest_pitch * 7 / 8 + (abs(dest_yaw) >> 6);
+	bdiff = dest_pitch * 7 / 8; // + (abs(dest_yaw) >> 6);
 	ydiff = dest_yaw;
 	{ /* HACK filter */
 		//// convert this to YAW_D?
@@ -985,6 +988,7 @@ static void control_update(void) {
 		ydiffr += ydiff - ydiffr / 16;////
 		ydiff = ydiffr / 16;
 	}
+#define RUDDER_NEUTRAL 0x6c00 /* Wild guess */
 
 	if (modes & (1 << MODE_ADAPTIVE_ENABLE)) { /* Adapt coefficients */
 		/* TODO: Maintan also a slow (longer term) average, then use
@@ -1024,6 +1028,10 @@ static void control_update(void) {
 		bdiff += (quick_avg(2) + HALFCO) >> CO;
 		ydiff += (quick_avg(3) + HALFCO) >> CO;
 	}
+//	/* Calculate expected rudder val to add to bdiff */
+//	rudder = RUDDER_NEUTRAL - ydiff;
+//	CLAMP(rudder, 0, 0xffff);
+//	bdiff += abs(rudder - RUDDER_NEUTRAL) >> 9;
 
 	CLAMP(ldiff, -0x6fff, 0x6fff);
 	CLAMP(rdiff, -0x6fff, 0x6fff);
@@ -1043,17 +1051,23 @@ static void control_update(void) {
 		throttle_rear = ((uint32_t) co_throttle * 0x8000 +
 				200 * bdiff) >> 8;
 	}
-	rudder = 0x6c00 + ydiff;
+	rudder = RUDDER_NEUTRAL + ydiff;
 
-	CLAMP(throttle_left, 0, 0xa000);
-	CLAMP(throttle_right, 0, 0xa000);
-	CLAMP(throttle_rear, 0, 0xa000);
+	CLAMP(throttle_left, 0, 0xb000);
+	CLAMP(throttle_right, 0, 0xb000);
+	CLAMP(throttle_rear, 0, 0xb000);
 	CLAMP(rudder, 0, 0xffff);
 
 	if (modes & (1 << MODE_MOTORS_ARMED)) {
 		actuator_serial_set(LEFT_MOTOR, (uint16_t) throttle_left);
 		actuator_serial_set(RIGHT_MOTOR, (uint16_t) throttle_right);
 		actuator_serial_set(RUDDER_MOTOR, (uint16_t) throttle_rear);
+		prev_armed = 1;
+	} else if (prev_armed) {
+		actuator_serial_set(LEFT_MOTOR, 0x0000);
+		actuator_serial_set(RIGHT_MOTOR, 0x0000);
+		actuator_serial_set(RUDDER_MOTOR, 0x0000);
+		prev_armed = 0;
 	}
 
 	actuator_hwpwm_set(RUDDER_SERVO, (uint16_t) rudder);
