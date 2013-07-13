@@ -23,7 +23,7 @@ extern VOL int16_t ahrs_yaw,
 /* Other non-ahrs data while we're there */
 extern VOL int16_t accel_acceleration[3];
 extern VOL float mag[3];
-extern VOL float acc[3];
+extern VOL float acc[3], avgalen, timediff;
 
 /* The quaternion */
 extern VOL float q[4];
