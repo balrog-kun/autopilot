@@ -116,16 +116,16 @@ static uint32_t config[16] = {
 	 * true "up".
 	 * Components are in 1 / 4096 units.
 	 */
-	[CFG_NEUTRAL_X] = -150, /* 150 to the right */
-	[CFG_NEUTRAL_Y] = -160, /* 160 to the front */
+	[CFG_NEUTRAL_X] = -90, /* 90 to the right */
+	[CFG_NEUTRAL_Y] = -180, /* 180 to the front */
 
 #define neutral_x ((int32_t) config[CFG_NEUTRAL_X])
 #define neutral_y ((int32_t) config[CFG_NEUTRAL_Y])
 
 	[CFG_ROLLPITCH_P] = 3 * 32,
-	[CFG_ROLLPITCH_D] = 4 * 32 / 5,
+	[CFG_ROLLPITCH_D] = 5 * 32 / 5,
 
-	[CFG_YAW_P] = 16 * 32,
+	[CFG_YAW_P] = 10 * 32,
 	[CFG_YAW_D] = 0,
 };
 
@@ -510,6 +510,19 @@ static void control_update(void) {
 		y = mi;		\
 	if (x > ma)		\
 		y = ma;
+
+	/* Apply a poor man's Expo */
+#define EXPO(x, op, n)	\
+	if (x op 128 + (n))	\
+		x += x - (128 + (n));
+	EXPO(cy_front, >, 40);
+	EXPO(cy_front, <, -40);
+	EXPO(cy_right, >, 40);
+	EXPO(cy_right, <, -40);
+	//EXPO(cy_front, >, 120);
+	//EXPO(cy_front, <, -120);
+	//EXPO(cy_right, >, 120);
+	//EXPO(cy_right, <, -120);
 
 	cur_x = (q1q3 - q0q2) * 4096.0f;
 	cur_y = (q2q3 + q0q1) * 4096.0f;

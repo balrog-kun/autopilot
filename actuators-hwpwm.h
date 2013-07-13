@@ -42,9 +42,9 @@ void actuators_hwpwm_stop(void) {
 static inline void actuator_hwpwm_set(uint8_t target, uint16_t value) {
 	actuators_hwpwm[target] = value;
 	if (target == 0)
-		LPC_TMR16B1->MR0 = ACT_SC_CYCLE - ACT_1MS - ACT_1MS / 3 -
+		LPC_TMR16B1->MR0 = ACT_SC_CYCLE - ACT_1MS - ACT_1MS / 8 -
 			((value * ACT_1MS) >> 16);
 	else if (target == 1)
-		LPC_TMR16B1->MR1 = ACT_SC_CYCLE - ACT_1MS - ACT_1MS / 3 -
+		LPC_TMR16B1->MR1 = ACT_SC_CYCLE - ACT_1MS - ACT_1MS / 8 -
 			((value * ACT_1MS) >> 16);
 }
