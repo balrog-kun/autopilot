@@ -618,6 +618,73 @@ static void altpid_update(void) {
 	//ret
 }
 
+static uint32_t osc_period[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+static void update_osc_periods(int32_t x, int32_t y) {
+	static int flags = 0;
+	static uint32_t first_zc[2], last_zc[2];
+
+	/* We detect full periods of 0.25s minimum, reduce this if necessary */
+#define MIN_HALF_PERIOD (F_CPU / 8)
+	/* Could use a max value as well */
+
+	int nflags = 0;
+	uint32_t now;
+#define X_VALID 1
+#define Y_VALID 2
+#define X_POSITIVE 4
+#define Y_POSITIVE 8
+
+	/* There must be a noticeable oscillation if wand to calculate period */
+	if (abs(x) > 200)
+		flags |= X_VALID;
+	if (abs(y) > 200)
+		flags |= Y_VALID;
+
+	if (x > 0)
+		nflags |= X_POSITIVE;
+	if (y > 0)
+		nflags |= Y_POSITIVE;
+	nflags ^= flags;
+	flags ^= nflags;
+
+	if (!(nflags >> 2))
+		return;
+
+	now = timer_read();
+
+	if (nflags & X_POSITIVE) {
+		/* A zero crossing in X occured */
+		if (now - last_zc[0] > MIN_HALF_PERIOD) {
+			if (flags & X_VALID) {
+				osc_period[0] = osc_period[2];
+				osc_period[2] = osc_period[4];
+				osc_period[4] = osc_period[6];
+				osc_period[6] = now - first_zc[0];
+			}
+
+			first_zc[0] = now;
+		}
+		last_zc[0] = now;
+		flags &= ~X_VALID;
+	}
+
+	if (nflags & Y_POSITIVE) {
+		/* A zero crossing in Y occured */
+		if (now - last_zc[1] > MIN_HALF_PERIOD) {
+			if (flags & Y_VALID) {
+				osc_period[1] = osc_period[3];
+				osc_period[3] = osc_period[5];
+				osc_period[5] = osc_period[7];
+				osc_period[7] = now - first_zc[1];
+			}
+
+			first_zc[1] = now;
+		}
+		last_zc[1] = now;
+		flags &= ~Y_VALID;
+	}
+}
+
 static uint16_t output[4];
 static void control_update(void) {
 	int32_t cur_pitch, cur_roll, cur_yaw;
@@ -783,6 +850,15 @@ static void control_update(void) {
 	cur_x = (q1q3 - q0q2) * 4096.0f;
 	cur_y = (q2q3 + q0q1) * 4096.0f;
 	cur_z = (1.0f - q1q1 - q2q2) * 4096.0f;
+
+	/*
+	 * Revisit: should we use cur_x/y - neutral_x/y values as input,
+	 * or the final diff_pitch/diff_roll that we output to the motors?
+	 * Also need to start using separate D values for pitch and roll.
+	 * Also, remember to discard the period values stored so far when
+	 * the stick is actuated on.
+	 */
+	update_osc_periods(cur_x - neutral_x, cur_y - neutral_y);
 
 	/* TODO: in all the formulas below, use the squares of the
 	 * rotation rates?  */
