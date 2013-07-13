@@ -28,10 +28,10 @@ VOL int16_t ahrs_pitch_rate, ahrs_roll_rate, ahrs_yaw_rate;
  * of the vehicle.  It should not include the gravitational
  * acceleration.
  */
-VOL int16_t accel_acceleration[3];
+//VOL int16_t accel_acceleration[3];
 
 VOL float q[4];
-VOL float mag[3], acc[3];
+VOL float mag[3], acc[3], avgalen, timediff;
 VOL float q0q0, q0q1, q0q2, q0q3, q1q1, q1q2, q1q3, q2q2, q2q3;
 
 /* TODO: investigae if we should do what MatrixPilot does: boost Kp by:
@@ -61,11 +61,10 @@ static float inv_sqrt(float number) {
 		(1.5f - (number * 0.5f * (*(float *) &i) * (*(float *) &i)));
 }
 
-#define sqrtf 
-#define sqrt 
+#define sqrt sqrtf
 static uint16_t ccsqrt(uint32_t x) {
 	/* This is mainly written for gcc on arm thumb2, on other architectures
-	 * using uin16_t may generate better code.  When initialising the
+	 * using uint16_t may generate better code.  When initialising the
 	 * loop we could just set res = 0, i = 1 << 15 and we would get
 	 * shorter code that is potentially slower.  */
 	uint32_t ret;
@@ -84,6 +83,10 @@ static uint16_t ccsqrt(uint32_t x) {
 
 static uint32_t hypot3(int16_t v[3]) {
 	return ccsqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+}
+
+static float hypot3f(float v[3]) {
+	return sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
 }
 
 static int mag_valid = 0;
@@ -296,12 +299,18 @@ static void vectors_update(void) {
 	float recip_norm;
 	float e[3] = { 0.0f, 0.0f, 0.0f };
 	float qa, qb, qc;
-	float timediff, g[3];///, grav[3];
+	float g[3], grav[3];
+	float flen;
 	int16_t graw[3];///, gscale[3];
 	int16_t araw[3], mraw[3];
 	uint32_t len;
 	uint32_t now;
 	static int cnt = 0;
+
+	/*
+	 * Note the comments below are hardware-specific, out-of-date and
+	 * often out of touch with the code they refer to.
+	 */
 
 	/* The gyro's bandwidth is 140Hz so schedule the next measurement
 	 * 1/140 sec from this measurement.  Don't try to compensate if the
@@ -309,7 +318,7 @@ static void vectors_update(void) {
 	 * than 1/140 sec next time, the measurements won't be independent.  */
 	/* ... */
 	/* The magnetometers's measurement frequency is 50Hz and the
-	 * accelerometer's rate is limite by buffer referesh rate of 55Hz, so
+	 * accelerometer's rate is limited by buffer referesh rate of 55Hz, so
 	 * schedule the next measurement 1/50 sec from the time the previous
 	 * measurement was *supposed* to happen.  Not sure if that's really
 	 * better, need to think about it.  */
@@ -359,12 +368,17 @@ static void vectors_update(void) {
 
 	mag_calib_update(mraw);
 
-	mag[0] = (float) mraw[0] / (float) 0x400;
-	mag[1] = (float) mraw[1] / (float) 0x400;
-	mag[2] = (float) mraw[2] / (float) 0x400;
-	acc[0] = (float) araw[0] / (float) 0x800;
-	acc[1] = (float) araw[1] / (float) 0x800;
-	acc[2] = (float) araw[2] / (float) 0x800;
+	mag[0] = (float) mraw[0];// / (float) 0x400;
+	mag[1] = (float) mraw[1];// / (float) 0x400;
+	mag[2] = (float) mraw[2];// / (float) 0x400;
+	/* Hardcoded manually-collected axis scale values for now */
+	/* TODO: some form of auto-calibration? */
+#define ACCEL_X_SCALE (1.0f / 0.995f)
+#define ACCEL_Y_SCALE (1.0f / 1.055f)
+#define ACCEL_Z_SCALE (1.0f / 0.915f)
+	acc[0] = (float) araw[0] * ACCEL_X_SCALE;// / (float) 0x800;
+	acc[1] = (float) araw[1] * ACCEL_Y_SCALE;// / (float) 0x800;
+	acc[2] = (float) araw[2] * ACCEL_Z_SCALE;// / (float) 0x800;
 
 	l3g4200d_read(graw);
 	/* REVISIT: 0.00875 or 0.0076294? */
@@ -429,28 +443,28 @@ static void vectors_update(void) {
 		e[2] = m[0] * w[1] - m[1] * w[0];
 	}
 
-	len = hypot3(araw);
+	flen = hypot3f(acc);
 
 	/* Compute feedback only if accelerometer measurement valid
 	 * (avoids NaN in accelerometer normalisation), say: 0.75 - 1.25g
 	 */
-	if (len > 0x600 && len < 0xa00) {
+	if (flen > 0.75f / 0.0039f && flen < 1.25f / 0.0039f) {
 		float v[3], a[3];
 		/* pay less attention to the accelerometer */
-		len <<= 0;
+		///len <<= 0;
 
 		/* Normalise accelerometer measurement */
 		/* TODO: sure? */
-		a[0] = (float) araw[0] / (float) len;
-		a[1] = (float) araw[1] / (float) len;
-		a[2] = (float) araw[2] / (float) len;
+		a[0] = acc[0] / flen;
+		a[1] = acc[1] / flen;
+		a[2] = acc[2] / flen;
 
 		/* Estimated gravity vector */
 		v[0] = q0q2 - q1q3;
 		v[1] = -q0q1 - q2q3;
 		v[2] = q1q1 + q2q2 - 1.0f;
 
-		/* Error is sum of cross product between estimated
+		/* Error is the cross product between estimated
 		 * direction and measured direction of field vectors */
 		e[0] += a[1] * v[2] - a[2] * v[1];
 		e[1] += a[2] * v[0] - a[0] * v[2];
@@ -526,17 +540,17 @@ static void vectors_update(void) {
 	ahrs_phi = (uint16_t) (atan2(2 * q2q3 - 2 * q0q1,
 			1 - 2 * q1q1 - 2 * q2q2) * 32768 / M_PI);
 #endif
-#if 0
 	grav[0] = q1q3 - q0q2;
 	grav[1] = q0q1 + q2q3;
 	grav[2] = 1 - q1q1 - q2q2;
 
-	ahrs_yaw = (uint16_t) (atan2(q1q2 - q0q3,
-			q0q0 + q1q1 - 1) * (32768 / M_PI));
-	ahrs_pitch = (uint16_t) (atan(grav[0] / sqrt(grav[1] * grav[1] +
-				grav[2] * grav[2])) * (32768 / M_PI));
-	ahrs_roll = (uint16_t) (atan(grav[1] / sqrt(grav[0] *grav[0] +
-				grav[2] * grav[2])) * (32768 / M_PI));
+	ahrs_yaw = (uint16_t) (int) (atan2f(q1q2 - q0q3,
+			q0q0 + q1q1 - 1) * (32768 / (float) M_PI));
+	ahrs_pitch = (uint16_t) (int) (atanf(grav[0] / sqrtf(grav[1] * grav[1] +
+				grav[2] * grav[2])) * (32768 / (float) M_PI));
+	ahrs_roll = (uint16_t) (int) (atanf(grav[1] / sqrtf(grav[0] * grav[0] +
+				grav[2] * grav[2])) * (32768 / (float) M_PI));
+#if 0
 	/* FIXME: overflows, naming */
 	ahrs_yaw_rate = (int16_t) (g[0] * (256l * 180 / M_PI));
 	ahrs_pitch_rate = (int16_t) (g[1] * (256l * 180 / M_PI));
@@ -641,14 +655,16 @@ void ahrs_init(void) {
 			avgm[0] += m[0];
 			avgm[1] += m[1];
 			avgm[2] += m[2];
-			avga[0] -= a[0];
-			avga[1] -= a[1];
-			avga[2] -= a[2];
+			avga[0] -= (float) a[0] * ACCEL_X_SCALE;
+			avga[1] -= (float) a[1] * ACCEL_Y_SCALE;
+			avga[2] -= (float) a[2] * ACCEL_Z_SCALE;
 		}
 	}
 	staticg[0] = avgg[0] * (1 / 2048.0f);
 	staticg[1] = avgg[1] * (1 / 2048.0f);
 	staticg[2] = avgg[2] * (1 / 2048.0f);
+
+	avgalen = hypot3f(avga) / 256.0f;
 
 	/* "Level" and "northward" are currently defined as in the plane
 	 * of the sensor board and wherever the magnetic field vector
