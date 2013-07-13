@@ -7,9 +7,9 @@
 volatile uint16_t actuators_serial[3];
 volatile uint32_t actuators_serial_ts[3];
 
-/* The ESC's serial operation timeout is something below 1000 cycles and
+/* The ESC's serial operation timeout is something below 1600 cycles and
  * it runs at 16MHz.  */
-#define ACT_TIMEOUT ((int) (1600.0 / 16000000 * F_CPU))
+#define ACT_TIMEOUT ((unsigned int) (1700.0 / 16000000 * F_CPU))
 
 #define DATA_PIN_MASK	0b1000
 #define ALL_PINS_MASK	0b1111
@@ -187,9 +187,6 @@ static inline uint16_t act_raw_read(int target, int addr) {
 	uint32_t flags;
 	uint16_t ret = 0;
 
-	/* Set the relevant GPIOs as outputs */
-	LPC_GPIO0->DIR |= ALL_PINS_MASK;
-
 	/* Set data pin low to signal a read op */
 	LPC_GPIO0->DATA &= ~ALL_PINS_MASK;
 	flags = irq_save();
@@ -222,15 +219,17 @@ static inline uint16_t act_raw_read(int target, int addr) {
 	RECEIVE_BIT(4)
 	RECEIVE_BIT(3)
 	RECEIVE_BIT(2)
-	RECEIVE_BIT(1)
-	RECEIVE_BIT(0)
+//	RECEIVE_BIT(1)
+//	RECEIVE_BIT(0)
 
+	actuators_serial_ts[target] = timer_read();
 	irq_restore(flags);
 
-	/* Start a dummy op to tell the ESC to stop driving DATA? */
-	my_delay(1);
-	act_pulse(target);
-	actuators_serial_ts[target] = timer_read();
+//	/* Start a dummy op to tell the ESC to stop driving DATA? */
+//	act_pulse(target);
+	while (timer_read() - actuators_serial_ts[target] < ACT_TIMEOUT);
+	LPC_GPIO0->DIR |= ALL_PINS_MASK;
+	LPC_GPIO0->DATA &= ~ALL_PINS_MASK;
 
 	return ret;
 }
@@ -248,8 +247,11 @@ void actuators_serial_init(int devices) {
 	LPC_IOCON->PIO0_3 = 0x0c0; /* GPIO, no pull-up/-down */
 
 	/* Set the DATA GPIOs as inputs, CLK outputs */
-	LPC_GPIO0->DIR &= ~DATA_PIN_MASK;
-	LPC_GPIO0->DIR |= CLK_PINS_MASK;
+//	LPC_GPIO0->DIR &= ~DATA_PIN_MASK;
+//	LPC_GPIO0->DIR |= CLK_PINS_MASK;
+//	LPC_GPIO0->DATA &= ~ALL_PINS_MASK;
+	/* Set DATA and CLK lines as outputs, oh well */
+	LPC_GPIO0->DIR |= ALL_PINS_MASK;
 	LPC_GPIO0->DATA &= ~ALL_PINS_MASK;
 
 	/* Wait for the ESCs to start main loop */
@@ -257,9 +259,9 @@ void actuators_serial_init(int devices) {
 
 	LPC_IOCON->PIO0_3 = 0x0c8; /* GPIO with a pull-down */
 
-	vals[0] = act_raw_read(0, 1);
-	vals[1] = act_raw_read(1, 1);
-	vals[2] = act_raw_read(2, 1);
+	vals[0] = act_raw_read(0, 0);
+	vals[1] = act_raw_read(1, 0);
+	vals[2] = act_raw_read(2, 0);
 
 	serial_write_hex16(vals[0]);
 	serial_write_hex16(vals[1]);
@@ -281,8 +283,10 @@ void actuators_serial_init(int devices) {
 	//// perhaps do some sort of ADC voltage check or to see if we really
 	//// have no battery, or read VBUS somehow to see if we're powered
 	//// from USB.
+#if 1
 	if (vals[0] != 0x1234 || vals[1] != 0x1234 || vals[2] != 0x1234)
 		die();
+#endif
 
 	/* Set the relevant GPIOs as outputs */
 	LPC_GPIO0->DIR |= ALL_PINS_MASK;
@@ -317,4 +321,36 @@ static inline void actuator_serial_set(uint8_t target, uint16_t value) {
 	act_raw_write(target, (value >> 3) |
 			((REVERSE_MASK << target) & 0x2000));
 	actuators_serial[target] = value;
+}
+
+static inline uint16_t actuator_serial_get_rpm(uint8_t target) {
+	uint32_t now = timer_read();
+
+	/* Busy wait if the last operation happened just a moment ago */
+	while (now - actuators_serial_ts[target] < ACT_TIMEOUT)
+		now = timer_read();
+
+	while (bus_busy()) {
+		try_reset();
+		while (timer_read() - actuators_serial_ts[target] < ACT_TIMEOUT)
+			;
+	}
+
+	return act_raw_read(target, 0) - 0x1234;
+}
+
+static inline uint16_t actuator_serial_get_vbat(uint8_t target) {
+	uint32_t now = timer_read();
+
+	/* Busy wait if the last operation happened just a moment ago */
+	while (now - actuators_serial_ts[target] < ACT_TIMEOUT)
+		now = timer_read();
+
+	while (bus_busy()) {
+		try_reset();
+		while (timer_read() - actuators_serial_ts[target] < ACT_TIMEOUT)
+			;
+	}
+
+	return act_raw_read(target, 1);
 }
