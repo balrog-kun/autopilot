@@ -20,15 +20,15 @@ static inline void adxl345_read(int16_t *a) {
 }
 
 static inline void adxl345_init(void) {
-	/* Write BW_RATE: Enable normal operation, set 100Hz output data rate */
+	/* Write BW_RATE: Enable normal operation, set 200Hz output data rate */
 	/* Write POWER_CTL: Enable measurement mode */
 	if (unlikely(!i2c_send_bytes(ADXL345_ADDR, 3,
-					(uint8_t[]) { 0x2c, 0x0a, 0x0b })))
+					(uint8_t[]) { 0x2c, 0x0b, 0x0b })))
 		serial_write1('A');
 
-	/* Write DATA_FORMAT: MSB justified, full +/-16g range */
+	/* Write DATA_FORMAT: LSB justified, full +/-16g range */
 	if (unlikely(!i2c_send_bytes(ADXL345_ADDR, 2,
-					(uint8_t[]) { 0x31, 0x0f })))
+					(uint8_t[]) { 0x31, 0x0b })))
 		serial_write1('A');
 
 	/* All other registers seem to have just the right defaults */
