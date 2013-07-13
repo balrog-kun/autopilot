@@ -17,6 +17,7 @@ static inline uint32_t bmp085_read(void) {
 
 	if (read_cnt & 127) {
 		uint32_t p;
+		int32_t x;
 
 		/* Read the measurement result */
 		if (unlikely(!i2c_send_byte(BMP085_ADDR, 0xf6))) {
@@ -34,10 +35,13 @@ static inline uint32_t bmp085_read(void) {
 			p = p * 2 / b4;
 		else
 			p = p / b4 * 2;
-		ret = p + (((((p >> 8) * (p >> 8) * 3038 - 7357 * p) >> 16) +
-					3791) >> 4);
-	//	ret = p + ((((((p >> 8) * (p >> 8) * 3038) >> 16) - ((7357 * p) >> 16)) +
-	//				3791) >> 4);
+		/*
+		 * In theory doing the sums before the shift should reduce
+		 * rounding errors.  For some reason the Bosch datasheet does
+		 * it the other way.  Oh well, we do it our way anyway.
+		 */
+		x = (p >> 8) * (p >> 8) * 3038 + (3791 << 16) - 7357 * p;
+		ret = p + (x >> 20);
 	} else {
 		int32_t x, b6;
 
