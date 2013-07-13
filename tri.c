@@ -1078,8 +1078,10 @@ static void control_update(void) {
 	output[3] = (uint16_t) rudder;
 }
 
-#define TEXT_DEBUG
-#ifndef TEXT_DEBUG
+//#define TEXT_DEBUG
+#define OSD_REPORT
+
+#if !defined(TEXT_DEBUG) || defined(OSD_REPORT)
 static void serial_write2(float v) {
 	uint16_t b = (v + 1.0f) * 32768.0f;
 	serial_write1((b >> 8) & 0xff);
@@ -1097,13 +1099,31 @@ static void serial_write_bin32(uint32_t v) {
 #endif
 #endif
 
-static int32_t pressure = 0;
+#define POLES 14
 
 int fps = 0;////
 static void status_update(void) {
+	static uint8_t cnt = 0;
 	if (ahrs_report) {
 #ifdef TEXT_DEBUG
-		serial_write_fp32((101300 - pressure) * 83, 1000);////
+		serial_write_fp32((int) altitude - home_altitude, 100);
+		serial_write_fp32(home_altitude, 100);
+		if (cnt >= 10) {
+			static uint32_t rpm_ts = 0;
+			uint32_t timediff;
+			cnt = 0;
+
+			timediff = timer_read() - rpm_ts;
+			serial_write_dec32((uint32_t)
+					actuator_serial_get_rpm(1) *
+					(F_CPU * 60 * 2 / POLES / 10000) /
+					(timediff / 10000));
+			rpm_ts += timediff;
+			/* 2.56V reference voltage, 47k resistor to GND and
+			 * 470k to VBAT, 16-bit max resolution */
+			serial_write_fp32(actuator_serial_get_vbat(1) * 263,
+					(0x10000 * 100 * 47) / (47 + 470));
+		}
 		serial_write_hex16(fps);////
 		serial_write_hex32(timer_read());////
 		int16_t cur_x = (q1q3 - q0q2) * 4096.0f;
@@ -1112,9 +1132,11 @@ static void status_update(void) {
 		serial_write_fp32(cur_x, 16);
 		serial_write_fp32(cur_y, 16);
 		serial_write_fp32(cur_z, 16);
-		serial_write_fp32(ahrs_pitch_rate, 16);
-		serial_write_fp32(ahrs_roll_rate, 16);
-		serial_write_fp32(ahrs_yaw_rate, 16);
+		/*
+		serial_write_fp32(ahrs_pitch_rate, 64);
+		serial_write_fp32(ahrs_roll_rate, 64);
+		serial_write_fp32(ahrs_yaw_rate, 64);
+		*/
 		serial_write_str("\r\n");
 #else
 		if (rx_no_signal > 3)
@@ -1177,13 +1199,51 @@ static void status_update(void) {
 #else
 #endif
 	}
+	/* Use a simple protocol to send the telemetry to the OSD */
+#ifdef OSD_REPORT
+	serial_write1(0x80); /* BARO_ALT */
+	serial_write_bin16(altitude / 10);
+	serial_write1((int8_t) (z_speed / 100));
+	serial_write1(0x81); /* FLAGS */
+	serial_write1(modes);
+	serial_write1(0x83); /* ATTITUDE */
+	/* Pitch & Yaw reversed (config) */
+	serial_write1((uint16_t) ahrs_roll >> 8);
+	serial_write1((uint16_t) -ahrs_pitch >> 8);
+	serial_write1((uint16_t) (ahrs_yaw - 0x4000) >> 8);
+
+	switch (cnt & 3) {
+	case 0 ... 2:
+		{
+			static uint32_t rpm_ts[3] = { 0, 0, 0 };
+			uint32_t timediff, rpm;
+
+			timediff = timer_read() - rpm_ts[cnt & 3];
+			rpm = (uint32_t) actuator_serial_get_rpm(cnt & 3) *
+				(F_CPU * 60 * 2 / POLES / 1000) /
+				(timediff / 1000);
+			rpm_ts[cnt & 3] += timediff;
+
+			serial_write1(0x84); /* ESCDATA */
+			serial_write1(cnt & 3);
+			serial_write_bin16(rpm);
+		}
+	case 3:
+		serial_write1(0x82); /* STATUS */
+		/* 2.56V reference voltage, 47k resistor to GND and
+		 * 470k to VBAT, 16-bit max resolution */
+		serial_write_bin16((actuator_serial_get_vbat(1) * 263 * 100) /
+				((0x10000 * 100 * 47) / (47 + 470) / 10));
+		serial_write1(rx_co_throttle);
+	}
+#endif
+	cnt ++;
 }
 
 static uint32_t ts = 0;
 static void loop(void) {
-	static int counter = 0;
+	static int counter50hz = 0;
 	static unsigned int stopped = 0;
-	int32_t p;
 	fps ++;////
 
 	/* No set udpate rate, go as fast as possible */
@@ -1192,26 +1252,20 @@ static void loop(void) {
 #endif
 
 	if (timer_read() > ts) {
-		counter ++;
+		counter50hz ++;
 		ts += F_CPU / 50; /* About every 20ms (50Hz) */
 		rx_no_signal = (rx_no_signal < 255) ? rx_no_signal + 1 : 255;
 	}
 
 	modes_update();
 	ahrs_update();
+	baro_update();
+	altitude_update();
 	control_update();
 
-	if (counter > 10) { /* About every 0.2s */
-		counter = 0;
+	if (counter50hz > 5) { /* About every 0.1s */
+		counter50hz = 0;
 		status_update();
-	}
-
-	p = bmp085_read();
-	if (p) {
-		if (pressure)
-			pressure += (p - pressure + 4) / 8;
-		else
-			pressure = p;
 	}
 
 	if (((modes >> MODE_PPM_STOP) & 1) != stopped) {
