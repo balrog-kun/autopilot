@@ -87,6 +87,7 @@ static void handle_input(char ch) {
 static uint8_t yaw_deadband_pos = 0x80;
 static uint8_t roll_deadband_pos = 0x80;
 static uint8_t pitch_deadband_pos = 0x80;
+static uint8_t throttle_deadband_pos = 0x80;
 
 enum {
 	CFG_MAGIC,
@@ -378,6 +379,8 @@ enum modes_e {
 	MODE_PITCHLEVEL_ENABLE,
 	/* Attempt to maintain level roll */
 	MODE_ROLLLEVEL_ENABLE,
+	/* Attempt to hold altitude */
+	MODE_ALTHOLD_ENABLE,
 };
 static uint32_t modes =
 	(0 << MODE_MOTORS_ARMED) |
@@ -388,7 +391,8 @@ static uint32_t modes =
 	(0 << MODE_PPM_STOP) |
 	(1 << MODE_HOLD_ENABLE) |
 	(1 << MODE_PITCHLEVEL_ENABLE) |
-	(1 << MODE_ROLLLEVEL_ENABLE);
+	(1 << MODE_ROLLLEVEL_ENABLE) |
+	(0 << MODE_ALTHOLD_ENABLE);
 #define SET_ONLY 0
 
 static void modes_update(void) {
@@ -410,6 +414,210 @@ static void modes_update(void) {
 	modes |= prev_sw << num;
 }
 
+/* Move to ahrs update or alt.c new file or split into sensors.c + alt.c/ahrs */
+
+static float altitude = 0.0f;
+
+/* Values in cm above the 1013.25hPa surface */
+/* TODO: GPS home_altitude to override baro home_altitude when available */
+static int home_altitude = 0;
+static int baro_altitude = 0;
+static void baro_update(void) {
+	int alt, pressure;
+
+	pressure = bmp085_read();
+	if (!pressure)
+		return;
+
+	/* Simple regression fitting for a few example pressures and
+	 * p0 = 101325 hPa gives the following plynomial to get altitude
+	 * from pressure without complex exponential functions:
+	 *
+	 * 0.0000004619160027 * p^2 - 0.175092787 * p + 13001.03778
+	 *
+	 * Errors are low within about -100m to 4000m AMSL, outside of
+	 * that range they grow very quickly.
+	 */
+	alt = 0.00004619160027 * pressure * pressure -
+		17.5092787 * pressure + 1300103.778;
+
+	if (baro_altitude)
+		/* Commented out, we don't want smoothing here */
+		/* baro_altitude += (alt - baro_altitude + 2) / 4; */
+		baro_altitude = alt;
+	else {
+		baro_altitude = alt;
+		home_altitude = alt;
+		altitude = alt;
+	}
+}
+
+#if 0
+/* Ugly MultiWii Alt.Hold code starts here */
+
+#define UPDATE_INTERVAL	(F_CPU / 30)   // 30hz update rate (20hz LPF on acc)
+#define INIT_DELAY	(F_CPU * 4) // 4 sec initialization delay
+#define BARO_HIST_SIZE	32
+
+int16_t applyDeadband16(int16_t value, int16_t deadband)
+{
+    if (abs(value) < deadband) {
+        value = 0;
+    } else if (value > 0) {
+        value -= deadband;
+    } else if (value < 0) {
+        value += deadband;
+    }
+    return value;
+}
+
+float applyDeadbandFloat(float value, int16_t deadband)
+{
+    if (abs(value) < deadband) {
+        value = 0;
+    } else if (value > 0) {
+        value -= deadband;
+    } else if (value < 0) {
+        value += deadband;
+    }
+    return value;
+}
+
+static int16_t baropid = 0;
+static int32_t altitude_to_hold;
+static int16_t errorAltitudeI = 0;
+static void altpid_update(void)
+{
+    static uint32_t deadLine = INIT_DELAY;
+    static int16_t baroHistTab[BARO_HIST_SIZE];
+    static int8_t baroHistIdx;
+    static int32_t baroHigh;
+    uint32_t dTime;
+    int16_t error;
+    int16_t accZ;
+    static float vel = 0.0f;
+    static int32_t lastBaroAlt;
+    static int32_t EstAlt;                // in cm
+    float baroVel;
+    uint32_t currentTime = timer_read();
+
+    if ((int32_t)(currentTime - deadLine) < UPDATE_INTERVAL || !altitude)
+        return;
+    dTime = currentTime - deadLine;
+    deadLine = currentTime;
+
+    // **** Alt. Set Point stabilization PID ****
+    baroHistTab[baroHistIdx] = altitude / 10;
+    baroHigh += baroHistTab[baroHistIdx];
+    baroHigh -= baroHistTab[(baroHistIdx + 1) & (BARO_HIST_SIZE - 1)];
+
+    baroHistIdx++;
+    if (baroHistIdx == BARO_HIST_SIZE) 
+        baroHistIdx = 0;
+
+#define BARO_LPF 0.6f
+    EstAlt = EstAlt * BARO_LPF + (baroHigh * 10.0f / (BARO_HIST_SIZE - 1)) * (1.0f - BARO_LPF); // additional LPF to reduce baro noise
+
+#define PIDALT_P 64.0f
+#define PIDALT_I 25.0f
+#define PIDALT_D 24.0f
+
+#define constrain(amt, low, high) ((amt) < (low) ? (low) : ((amt) > (high) ? (high) : (amt)))
+    // P
+    error = constrain(altitude_to_hold - EstAlt, -300.0f, 300.0f);
+    error = applyDeadband16(error, 10.0f); // remove small P parametr to reduce noise near zero position
+    baropid = constrain((PIDALT_P * error / 100.0f), -150.0f, +150.0f);
+
+    // I
+    errorAltitudeI += error * PIDALT_I / 50.0f;
+    errorAltitudeI = constrain(errorAltitudeI, -30000.0f, 30000.0f);
+    baropid += (errorAltitudeI / 500.0f); // I in range +/-60
+
+    // projection of ACC vector to global Z, with 1G subtracted
+    accZ = acc[0] * (q1q3 - q0q2) +
+		acc[1] * (q2q3 + q0q1) + acc[2] * (1 - q1q1 - q2q2);
+    accZ -= avgalen;
+#define accz_deadband 50.0f
+    accZ = -applyDeadband16(accZ, avgalen / accz_deadband);
+
+    // Integrator - velocity, cm/sec
+#define accVelScale (9.80665f / avgalen / 10000.0f) // TODO
+    vel += accZ * accVelScale * dTime;
+
+    baroVel = (EstAlt - lastBaroAlt) / (dTime / (float) F_CPU);
+    baroVel = constrain(baroVel, -300.0f, 300.0f); // constrain baro velocity +/- 300cm/s
+    baroVel = applyDeadbandFloat(baroVel, 10.0f); // to reduce noise near zero
+    lastBaroAlt = EstAlt;
+
+    // apply Complimentary Filter to keep near zero caluculated velocity based on baro velocity
+#define BARO_CF 0.985f
+    vel = vel * BARO_CF + baroVel * (1.0f - BARO_CF);
+    // vel = constrain(vel, -300, 300); // constrain velocity +/- 300cm/s
+
+    // D
+    baropid -= constrain(PIDALT_D * applyDeadbandFloat(vel, 5.0f) / 20.0f, -150.0f, 150.0f);
+}
+/* Ugly MultiWii Alt.Hold code ends here */
+#endif
+
+/* Altitude and vertical speed estimation using a simple Kalman filter */
+static float z_speed = 0; /* Upwards speed in mm/s */
+static float acc_factor = 1.0f;
+static int prev_baro_altitude = 0;
+#if 0
+static void altitude_update(void) {
+	float z_acc, e, baro_z_speed;
+
+	e = baro_altitude - altitude;
+	baro_z_speed = (baro_altitude - prev_baro_altitude) * 10.0f;
+
+	/* Projection of ACC vector to global Z converted to g */
+	z_acc = (acc[0] * (q1q3 - q0q2) +
+			acc[1] * (q2q3 + q0q1) +
+			acc[2] * (1 - q1q1 - q2q2)) * acc_factor / avgalen;
+
+	/* Convert to mm/s^2 and subtract g, integrate */
+	z_speed += ((-z_acc - 1.0f) * 9.80665f * 1000.0f) * timediff;
+	/*
+	 * Instead of the Kalman style integral correction, we simply filter
+	 * z_speed using baro_speed.
+	 */
+#if 0
+	/* Apply the integral correction */
+	z_speed += /* 2 K_i */ 1.0f * e * timediff;
+#endif
+	if (prev_baro_altitude)
+		z_speed += (baro_z_speed - z_speed) * 0.3f * timediff;
+
+	altitude += (z_speed * 0.1f + e * /* 2 K_p */ 0.3f) * timediff;
+
+	/*
+	 * If we're constantly having to apply z_speed erorr, perhaps we should
+	 * adapt the acc_factor.  TODO: do we use the baro-based z_speed error?
+	 */
+	acc_factor += (z_acc + 1.0f) * 0.001f * timediff;
+
+	/* TODO: if gps available also continuously recalib the baro */
+
+	prev_baro_altitude = baro_altitude;
+}
+#endif
+
+static void altitude_update(void) {
+	z_speed = (baro_altitude - prev_baro_altitude) * 10.0f;
+
+	altitude += (baro_altitude - altitude) * 0.3f;
+
+	prev_baro_altitude = baro_altitude;
+}
+
+static int alt_pid_i;
+static void altpid_update(void) {
+	int alt_pid_p;
+
+	//ret
+}
+
 static uint16_t output[4];
 static void control_update(void) {
 	int32_t cur_pitch, cur_roll, cur_yaw;
@@ -424,6 +632,8 @@ static void control_update(void) {
 	/* sti(); */
 
 	int32_t throttle_left, throttle_right, throttle_rear, rudder;
+	int prev_armed = 0;
+	int prev_althold = 0;
 
 	co_throttle -= 10;
 	if (co_throttle < 0)
@@ -499,6 +709,52 @@ static void control_update(void) {
 					co_throttle >= hover_thr * 3 / 4)
 				modes |= 1 << MODE_EMERGENCY;
 	}
+
+#if 0
+	if (0) {/*(modes & (1 << MODE_MOTORS_ARMED)) && co_throttle > 30 &&
+			((modes & (1 << MODE_EMERGENCY)) ||
+			 rx_id_sw == 2)) {*/
+		static int alt_hold_corr;
+
+		if (!prev_althold) {
+			prev_althold = 1;
+			altitude_to_hold = altitude;
+			throttle_deadband_pos = co_throttle;
+			errorAltitudeI = 0;
+			baropid = 0;
+			alt_hold_corr = 0;
+		}
+
+		/* TOOD: divide by cosine of angle from level */
+		altpid_update(co_throttle);
+
+		if (abs(co_throttle - throttle_deadband_pos) > 20) {
+			if (co_throttle > throttle_deadband_pos) {
+				if (!alt_hold_corr)
+					/* Make sure reaction is immediate */
+					alt_hold_corr = 6000;
+				alt_hold_corr += co_throttle -
+					throttle_deadband_pos - 15;
+			} else {
+				if (!alt_hold_corr)
+					/* Make sure reaction is immediate */
+					alt_hold_corr = -6000;
+       				alt_hold_corr += co_throttle -
+					throttle_deadband_pos + 15;
+			}
+			if (abs(alt_hold_corr) > 65) {
+				altitude_to_hold += alt_hold_corr >> 6;
+				alt_hold_corr -= (alt_hold_corr >> 6) << 6;
+			}
+			errorAltitudeI = 0;
+		} else if (alt_hold_corr) {
+			alt_hold_corr = 0;
+			altitude_to_hold = altitude;
+		}
+		co_throttle = throttle_deadband_pos + baropid / 8;
+	} else
+		prev_althold = 0;
+#endif
 
 #define CLAMP(x, mi, ma)	\
 	if (x < mi)		\
