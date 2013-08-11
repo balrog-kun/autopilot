@@ -303,8 +303,8 @@ static float mag_calib_update(void) {
 
 	if (abs(pitch_cnt) > 64 * 30 && abs(yaw_cnt) > 64 * 30 &&
 			invalid_cnt == 0 && sample_cnt > 15) {
-		max_len = max_len * 1.05f;
-		min_len = min_len * 0.95f;
+		max_len = max_len * 1.10f;
+		min_len = min_len * 0.90f;
 		calibrating = 0;
 		mag_valid = 1;
 		mag[0] = m[0] - mag_calib_x;
@@ -477,7 +477,8 @@ static void vectors_update(void) {
 	/* Compute feedback only if accelerometer measurement valid
 	 * (avoids NaN in accelerometer normalisation), say: 0.75 - 1.25g
 	 */
-	if (flen > 0.75f / 0.0039f && flen < 1.25f / 0.0039f) {
+	acc_valid = (len > 0.60f / 0.0039f && len < 2.0f / 0.0039f);
+	if (acc_valid) {
 		float v[3], a[3];
 		/* pay less attention to the accelerometer */
 		///len <<= 0;
