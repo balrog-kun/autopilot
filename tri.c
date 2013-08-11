@@ -38,7 +38,7 @@
 
 #define REVERSE_MASK	\
 	((0 << (13 - RUDDER_MOTOR)) |	\
-	 (0 << (13 - RIGHT_MOTOR)) |	\
+	 (1 << (13 - RIGHT_MOTOR)) |	\
 	 (1 << (13 - LEFT_MOTOR)))
 
 #include <stdint.h>
@@ -57,6 +57,7 @@
 #include "ahrs.h"
 //#include "gps.h"
 //#include "adc.h"
+#include "config.h"
 
 int abs(int);
 void *memcpy(void *, void *, int);
@@ -89,23 +90,9 @@ static uint8_t roll_deadband_pos = 0x80;
 static uint8_t pitch_deadband_pos = 0x80;
 static uint8_t throttle_deadband_pos = 0x80;
 
-enum {
-	CFG_MAGIC,
-	CFG_NEUTRAL_X,
-	CFG_NEUTRAL_Y,
-	CFG_ROLLPITCH_P,
-	CFG_ROLLPITCH_D,
-	CFG_YAW_P,
-	CFG_YAW_D,
-	CFG_ADAPTIVE_0,
-	CFG_ADAPTIVE_1,
-	CFG_ADAPTIVE_2,
-	CFG_ADAPTIVE_3,
-	__CFG_END,
-};
-static uint32_t config[16] = {
+uint32_t config[16] = {
 	/* Increment on ver change */
-	[CFG_MAGIC] = 0xabcd0001, /* Increment on ver change */
+	[CFG_MAGIC] = 0xabcd0002, /* Increment on ver change */
 
 	/* Try to find the optimal x and y for static hover, they are not
 	 * zero because the sensor board is not mounted perfectly level and
@@ -119,9 +106,6 @@ static uint32_t config[16] = {
 	 */
 	[CFG_NEUTRAL_X] = -90, /* 90 to the right */
 	[CFG_NEUTRAL_Y] = -180, /* 180 to the front */
-
-#define neutral_x ((int32_t) config[CFG_NEUTRAL_X])
-#define neutral_y ((int32_t) config[CFG_NEUTRAL_Y])
 
 	[CFG_ROLLPITCH_P] = 3 * 32,
 	[CFG_ROLLPITCH_D] = 5 * 32 / 5,

@@ -19,6 +19,7 @@
 #include "l3g4200d.h"
 #include "adxl345.h"
 #include "hmc5883l.h"
+#include "config.h"
 
 VOL int16_t ahrs_pitch, ahrs_roll, ahrs_yaw;
 VOL int16_t ahrs_pitch_rate, ahrs_roll_rate, ahrs_yaw_rate;
@@ -109,10 +110,13 @@ static void mag_calib_update(int16_t *mag) {
 	m[0] = mag[0];
 	m[1] = mag[1];
 	m[2] = mag[2];
-	mag[0] = m[0] - calib[0] + 0.5f;
-	mag[1] = m[1] - calib[1] + 0.5f;
-	mag[2] = m[2] - calib[2] + 0.5f;
-	len = hypot3(mag);
+	mag[0] -= mag_calib_x;
+	mag[1] -= mag_calib_y;
+	mag[2] -= mag_calib_z;
+	imag[0] = mag[0] + 0.5f;
+	imag[1] = mag[1] + 0.5f;
+	imag[2] = mag[2] + 0.5f;
+	len = hypot3(imag);
 
 	if (len > min_len && len < max_len) {
 		mag_valid = !calibrating;
@@ -238,13 +242,13 @@ static void mag_calib_update(int16_t *mag) {
 		(q2q3 + q0q1) * (p2p3 + p0p1) +
 		(1 - q1q1 - q2q2) * (1 - p1p1 - p1p2);
 
-	calib[0] += 0.3 * (m[0] + prev_m[0] -
+	mag_calib_x += 0.3 * (m[0] + prev_m[0] -
 		(t[0] * prev_m[0] + t[1] * prev_m[1] + t[2] * prev_m[2]) -
 		(t[0] *      m[0] + t[3] *      m[1] + t[6] *      m[2]));
-	calib[1] += 0.3 * (m[1] + prev_m[1] -
+	mag_calib_y += 0.3 * (m[1] + prev_m[1] -
 		(t[3] * prev_m[0] + t[4] * prev_m[1] + t[5] * prev_m[2]) -
 		(t[1] *      m[0] + t[4] *      m[1] + t[7] *      m[2]));
-	calib[2] += 0.3 * (m[2] + prev_m[2] -
+	mag_calib_z += 0.3 * (m[2] + prev_m[2] -
 		(t[6] * prev_m[0] + t[7] * prev_m[1] + t[8] * prev_m[2]) -
 		(t[2] *      m[0] + t[5] *      m[1] + t[8] *      m[2]));
 #else
@@ -264,15 +268,15 @@ static void mag_calib_update(int16_t *mag) {
 	t[2] = m[2] - prev_m[2];
 	/* TODO: use ccsqrt */
 	diff_len = sqrtf(t[0] * t[0] + t[1] * t[1] + t[2] * t[2]);
-	prev_m[0] -= calib[0];
-	prev_m[1] -= calib[1];
-	prev_m[2] -= calib[2];
+	prev_m[0] -= mag_calib_x;
+	prev_m[1] -= mag_calib_y;
+	prev_m[2] -= mag_calib_z;
 	prev_len = sqrtf(prev_m[0] * prev_m[0] + prev_m[1] * prev_m[1] +
 			prev_m[2] * prev_m[2]);
 
-	calib[0] += 1.0f * t[0] / diff_len * ((float) len - prev_len);
-	calib[1] += 1.0f * t[1] / diff_len * ((float) len - prev_len);
-	calib[2] += 1.0f * t[2] / diff_len * ((float) len - prev_len);
+	mag_calib_x += 1.0f * t[0] / diff_len * ((float) len - prev_len);
+	mag_calib_y += 1.0f * t[1] / diff_len * ((float) len - prev_len);
+	mag_calib_z += 1.0f * t[2] / diff_len * ((float) len - prev_len);
 #endif
 
 	if (abs(pitch_cnt) > 64 * 30 && abs(yaw_cnt) > 64 * 30 &&
