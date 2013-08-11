@@ -5,10 +5,12 @@ static inline void hmc5883l_read(int16_t *a) {
 
 	/* Seems there's no need to send the register address to this chip,
 	 * clever */
+#if 1
 	if (unlikely(!i2c_send_byte(HMC5883L_ADDR, 0x03))) {
 		serial_write1('M');
 		serial_write1('S');
 	}
+#endif
 
 	if (unlikely(!i2c_request_bytes(HMC5883L_ADDR, sizeof(regs), regs))) {
 		serial_write1('M');
@@ -24,7 +26,8 @@ static inline void hmc5883l_read(int16_t *a) {
 
 static inline void hmc5883l_init(void) {
 	/* Write CRA, CRB and MR: continuous mode at max frequency, averaging */
+	/* Try a +/- 4Ga range */
 	if (unlikely(!i2c_send_bytes(HMC5883L_ADDR, 4,
-					(uint8_t[]) { 0x00, 0x78, 0x20, 0 })))
+					(uint8_t[]) { 0x00, 0x78, 0x80, 0 })))
 		serial_write1('M');
 }
