@@ -115,33 +115,36 @@ uint32_t config[16] = {
 };
 
 #define FLASH_END 0x8000
+#define CONFIG_END (FLASH_END - 256) /* Last sector dead already? */
 
 static void config_save(void) {
-	uint8_t buf[256];
+	uint32_t buf[256 / 4];
 	int i;
 
 	uint32_t ret[2];
 	uint32_t prepare_cmd[3] = {
 		50,
-		(FLASH_END - 1) / 4096,
-		(FLASH_END - 1) / 4096
+		(CONFIG_END - 1) / 4096,
+		(CONFIG_END - 1) / 4096,
 	};
 	uint32_t write_cmd[5] = {
 		51,
-		FLASH_END - 256,
+		CONFIG_END - sizeof(buf),
 		(uint32_t) &buf,
-		256,
+		sizeof(buf),
 		F_CPU / 1000,
 	};
 
-	for (i = 0; i < (int) (sizeof(buf) - sizeof(config)); i ++)
-		buf[i] = 0;
-	memcpy(buf + sizeof(buf) - sizeof(config), config, sizeof(config));
+	for (i = 0; i < (int) (sizeof(buf) - sizeof(config)) / 4; i ++)
+		buf[i] = 0xf0f0f0f0;
+	memcpy((uint8_t *) buf + sizeof(buf) - sizeof(config),
+			config, sizeof(config));
 
 #define CMD_SUCCESS 0
 	/* Call the In-Application Programmer command handler */
 	/* Note our linker script makes sure the last 32 RAM bytes are
 	 * free for the IAP to use */
+	ret[0] = 100;
 	cli();
 	((void (*)(uint32_t *, uint32_t *)) 0x1fff1ff1)(prepare_cmd, ret);
 	sei();
@@ -153,6 +156,7 @@ static void config_save(void) {
 		return;
 	}
 
+	ret[0] = 100;
 	cli();
 	((void (*)(uint32_t *, uint32_t *)) 0x1fff1ff1)(write_cmd, ret);
 	sei();
@@ -163,6 +167,8 @@ static void config_save(void) {
 		serial_write_str("\r\n");
 		return;
 	}
+
+	serial_write_str("Flash write success\r\n");
 }
 
 static void config_update(int co_right, int cy_right, int cy_front) {
