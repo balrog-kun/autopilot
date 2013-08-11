@@ -90,10 +90,31 @@ static float hypot3f(float v[3]) {
 	return sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
 }
 
-static int mag_valid = 0;
-static void mag_calib_update(int16_t *mag) {
-	static float calib[3];
+static void mag_static_reset(void) {
+	float g[3], gxm[3], invlen;
 
+	/* The other way to do this would be take x = local_to_global(m);
+	 *   staticm[0] = hypot(x[0], x[1]);
+	 *   staticm[1] = x[2];
+	 */
+
+	/* Estimated gravity vector */
+	g[0] = q0q2 - q1q3;
+	g[1] = -q0q1 - q2q3;
+	g[2] = q1q1 + q2q2 - 1.0f;
+
+	gxm[0] = mag[1] * g[2] - mag[2] * g[1];
+	gxm[1] = mag[2] * g[0] - mag[0] * g[2];
+	gxm[2] = mag[0] * g[1] - mag[1] * g[0];
+	staticm[0] = gxm[0] * gxm[0] + gxm[1] * gxm[1] + gxm[2] * gxm[2];
+	staticm[1] = mag[0] * g[0] + mag[1] * g[1] + mag[2] * g[2];
+	invlen = inv_sqrt(staticm[0] + staticm[1] * staticm[1]);
+	/* TODO: use ccsqrt */
+	staticm[0] = sqrtf(staticm[0]) * invlen;
+	staticm[1] *= -invlen;
+}
+
+static float mag_calib_update(void) {
 	static int32_t pitch_cnt;
 	static int32_t yaw_cnt;
 	static int32_t sample_cnt;
@@ -102,6 +123,7 @@ static void mag_calib_update(int16_t *mag) {
 	static uint32_t min_len = 10000;
 	static uint32_t max_len = 0;
 	float t[3], m[3], diff_len, prev_len;
+	int16_t imag[3];
 
 	uint32_t len;
 	static int invalid_cnt = 30;
@@ -133,8 +155,8 @@ static void mag_calib_update(int16_t *mag) {
 		sample_cnt = 0;
 	}
 
-	if (!calibrating) /* XXX: light up a led or something? */
-		return;
+	if (!calibrating)
+		return len;
 
 	/* Magnetometer is considered not calibrated, either because we've
 	 * just booted up and there haven't been enough rotation to make
@@ -155,7 +177,7 @@ static void mag_calib_update(int16_t *mag) {
 		pitch_cnt = 0;
 		yaw_cnt = 0;
 		sample_cnt ++;
-		return;
+		return len;
 	}
 
 	if (len < min_len)
@@ -176,7 +198,7 @@ static void mag_calib_update(int16_t *mag) {
 
 	if (fabsf(m[0] - prev_m[0]) + fabsf(m[1] - prev_m[1]) +
 			fabsf(m[2] - prev_m[2]) < 60.0f)
-		return;
+		return len;
 
 	/* Iteratively improve the offset vector moving it closer to the true
 	 * value in the plane containing the latest two measurements.  This is
@@ -285,8 +307,12 @@ static void mag_calib_update(int16_t *mag) {
 		min_len = min_len * 0.95f;
 		calibrating = 0;
 		mag_valid = 1;
-		/* disable a led now? */
-		return;
+		mag[0] = m[0] - mag_calib_x;
+		mag[1] = m[1] - mag_calib_y;
+		mag[2] = m[2] - mag_calib_z;
+		/* reset nominal magnetic vector again, staticm[] */
+		mag_static_reset();
+		return len;
 	}
 
 	/* Save new values for the next update */
@@ -297,6 +323,7 @@ static void mag_calib_update(int16_t *mag) {
 		p2p2 = q2q2, p2p3 = q2q3;
 #endif
 	sample_cnt ++;
+	return len;
 }
 
 static void vectors_update(void) {
@@ -304,10 +331,9 @@ static void vectors_update(void) {
 	float e[3] = { 0.0f, 0.0f, 0.0f };
 	float qa, qb, qc;
 	float g[3], grav[3];
-	float flen;
 	int16_t graw[3];///, gscale[3];
 	int16_t araw[3], mraw[3];
-	uint32_t len;
+	float len;
 	uint32_t now;
 	static int cnt = 0;
 
@@ -365,24 +391,25 @@ static void vectors_update(void) {
 #endif
 
 	adxl345_read(araw);
-	hmc5883l_read(mraw);
+
 	araw[0] = -araw[0];
 	araw[1] = -araw[1];
 	araw[2] = -araw[2];
-
-	mag_calib_update(mraw);
-
-	mag[0] = (float) mraw[0];// / (float) 0x400;
-	mag[1] = (float) mraw[1];// / (float) 0x400;
-	mag[2] = (float) mraw[2];// / (float) 0x400;
 	/* Hardcoded manually-collected axis scale values for now */
 	/* TODO: some form of auto-calibration? */
 #define ACCEL_X_SCALE (1.0f / 0.995f)
 #define ACCEL_Y_SCALE (1.0f / 1.055f)
 #define ACCEL_Z_SCALE (1.0f / 0.915f)
-	acc[0] = (float) araw[0] * ACCEL_X_SCALE;// / (float) 0x800;
-	acc[1] = (float) araw[1] * ACCEL_Y_SCALE;// / (float) 0x800;
-	acc[2] = (float) araw[2] * ACCEL_Z_SCALE;// / (float) 0x800;
+	acc[0] = (float) araw[0] * ACCEL_X_SCALE;
+	acc[1] = (float) araw[1] * ACCEL_Y_SCALE;
+	acc[2] = (float) araw[2] * ACCEL_Z_SCALE;
+
+	hmc5883l_read(mraw);
+
+	mag[0] = (float) mraw[0];
+	mag[1] = (float) mraw[1];
+	mag[2] = (float) mraw[2];
+	len = mag_calib_update();
 
 	l3g4200d_read(graw);
 	/* REVISIT: 0.00875 or 0.0076294? */
@@ -415,12 +442,10 @@ static void vectors_update(void) {
 		float bx, bz;
 		float w[3], m[3];
 
-		len = hypot3(mraw);
-
 		/* Normalise magnetometer measurement */
-		m[0] = (float) mraw[0] / (float) len;
-		m[1] = (float) mraw[1] / (float) len;
-		m[2] = (float) mraw[2] / (float) len;
+		m[0] = mag[0] / len;
+		m[1] = mag[1] / len;
+		m[2] = mag[2] / len;
 
 #if 0
 		/* Reference direction of the geomagnetic field */
@@ -447,7 +472,7 @@ static void vectors_update(void) {
 		e[2] = m[0] * w[1] - m[1] * w[0];
 	}
 
-	flen = hypot3f(acc);
+	len = hypot3f(acc);
 
 	/* Compute feedback only if accelerometer measurement valid
 	 * (avoids NaN in accelerometer normalisation), say: 0.75 - 1.25g
@@ -459,9 +484,9 @@ static void vectors_update(void) {
 
 		/* Normalise accelerometer measurement */
 		/* TODO: sure? */
-		a[0] = acc[0] / flen;
-		a[1] = acc[1] / flen;
-		a[2] = acc[2] / flen;
+		a[0] = acc[0] / len;
+		a[1] = acc[1] / len;
+		a[2] = acc[2] / len;
 
 		/* Estimated gravity vector */
 		v[0] = q0q2 - q1q3;
@@ -571,7 +596,8 @@ static void vectors_update(void) {
 }
 
 /* Try to set a quaternion that aligns "a" with gravity ([0, 0, -1]),
- * and "m" with [staticm[0], 0, staticm[1]] */
+ * and "m" with [staticm[0], 0, staticm[1]].
+ * Note that staticm is not set at this point... */
 static void quaternion_reset(float *a, float *m) {
 	float halfangle, axislen, q0[3], q1[4], mref[2];
 
@@ -628,7 +654,7 @@ void ahrs_init(void) {
 	int16_t a[3], m[3];
 	int32_t avgg[3];
 	float avgm[3], avga[3];
-	float invlen, axm[3];
+	///float invlen, axm[3];
 
 	/* Calibrate the sensors while waiting for the ESCs to detect
 	 * voltages etc. */
@@ -668,8 +694,6 @@ void ahrs_init(void) {
 	staticg[1] = avgg[1] * (1 / 2048.0f);
 	staticg[2] = avgg[2] * (1 / 2048.0f);
 
-	avgalen = hypot3f(avga) / 256.0f;
-
 	/* "Level" and "northward" are currently defined as in the plane
 	 * of the sensor board and wherever the magnetic field vector
 	 * is pointing related to the average gravity vector.  So
@@ -686,12 +710,17 @@ void ahrs_init(void) {
 	 * gravity vector, although ignoring its oriignal direction and
 	 * only setting the angle from vertical.
 	 */
-	avgm[0] *= 0.0001f;
-	avgm[1] *= 0.0001f;
-	avgm[2] *= 0.0001f;
-	avga[0] *= 0.0001f;
-	avga[1] *= 0.0001f;
-	avga[2] *= 0.0001f;
+
+	mag[0] = avgm[0] * (1.0f / 256.0f);
+	mag[1] = avgm[1] * (1.0f / 256.0f);
+	mag[2] = avgm[2] * (1.0f / 256.0f);
+	mag_calib_update(); /* Subtract calibrated offset if available */
+
+	acc[0] = avga[0] * (1.0f / 256.0f);
+	acc[1] = avga[1] * (1.0f / 256.0f);
+	acc[2] = avga[2] * (1.0f / 256.0f);
+	avgalen = hypot3f(acc);
+#if 0
 	axm[0] = avgm[1] * avga[2] - avgm[2] * avga[1];
 	axm[1] = avgm[2] * avga[0] - avgm[0] * avga[2];
 	axm[2] = avgm[0] * avga[1] - avgm[1] * avga[0];
@@ -701,13 +730,14 @@ void ahrs_init(void) {
 	/* TODO: use ccsqrt */
 	staticm[0] = sqrtf(staticm[0]) * invlen;
 	staticm[1] *= -invlen;
+#endif
 
 	/* TODO: check that the angle between the two vectors is
 	 * in a sensible range (limits may need to be set per user
 	 * lattitude? could also make use of the GPS?) */
 
 	/* set initial pos */
-	quaternion_reset(avga, avgm);
+	quaternion_reset(acc, mag);
 
 	integral_fb[0] = integral_fb[1] = integral_fb[2] = 0.0f;
 
