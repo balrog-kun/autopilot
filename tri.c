@@ -546,22 +546,24 @@ static void altpid_update(void)
 
 /* Altitude and vertical speed estimation using a simple Kalman filter */
 static float z_speed = 0; /* Upwards speed in mm/s */
-static float acc_factor = 1.0f;
-static int prev_baro_altitude = 0;
-#if 0
+#if 1
 static void altitude_update(void) {
 	float z_acc, e, baro_z_speed;
+	static int prev_baro_altitude = 0;
+	static float acc_factor = -1.0f;
 
 	e = baro_altitude - altitude;
 	baro_z_speed = (baro_altitude - prev_baro_altitude) * 10.0f;
 
 	/* Projection of ACC vector to global Z converted to g */
+	/* TODO: try to detect axis scale misalignment? */
 	z_acc = (acc[0] * (q1q3 - q0q2) +
 			acc[1] * (q2q3 + q0q1) +
-			acc[2] * (1 - q1q1 - q2q2)) * acc_factor / avgalen;
+			acc[2] * (1 - q1q1 - q2q2)) / avgalen;
 
 	/* Convert to mm/s^2 and subtract g, integrate */
-	z_speed += ((-z_acc - 1.0f) * 9.80665f * 1000.0f) * timediff;
+	z_speed += ((z_acc / acc_factor - 1.0f) * 9.80665f * 1000.0f) *
+		timediff;
 	/*
 	 * Instead of the Kalman style integral correction, we simply filter
 	 * z_speed using baro_speed.
@@ -579,14 +581,13 @@ static void altitude_update(void) {
 	 * If we're constantly having to apply z_speed erorr, perhaps we should
 	 * adapt the acc_factor.  TODO: do we use the baro-based z_speed error?
 	 */
-	acc_factor += (z_acc + 1.0f) * 0.001f * timediff;
+	acc_factor += (z_acc - acc_factor) * 0.1f * timediff;
 
 	/* TODO: if gps available also continuously recalib the baro */
 
 	prev_baro_altitude = baro_altitude;
 }
-#endif
-
+#else
 static void altitude_update(void) {
 	z_speed = (baro_altitude - prev_baro_altitude) * 10.0f;
 
@@ -594,6 +595,7 @@ static void altitude_update(void) {
 
 	prev_baro_altitude = baro_altitude;
 }
+#endif
 
 static int alt_pid_i;
 static void altpid_update(void) {
