@@ -573,9 +573,25 @@ static void altitude_update(void) {
 	z_speed += /* 2 K_i */ 1.0f * e * timediff;
 #endif
 	if (prev_baro_altitude)
-		z_speed += (baro_z_speed - z_speed) * 0.3f * timediff;
+		z_speed += (baro_z_speed - z_speed) * 0.5f * timediff;
 
 	altitude += (z_speed * 0.1f + e * /* 2 K_p */ 0.3f) * timediff;
+
+	/*
+	 * The barometer altitude is fairly reliable at 2-3m precision so
+	 * cap the difference between altitude and baro altitude at +/- 2.5m.
+	 * Note barometer altitude must be fused with GPS data if available
+	 * separately from altitude for this check.
+	 */
+	if (altitude < baro_altitude - 250) {
+		altitude = baro_altitude - 250;
+		if (prev_baro_altitude)
+			z_speed = baro_z_speed;
+	} else if (altitude > baro_altitude + 250) {
+		altitude = baro_altitude + 250;
+		if (prev_baro_altitude)
+			z_speed = baro_z_speed;
+	}
 
 	/*
 	 * If we're constantly having to apply z_speed erorr, perhaps we should
