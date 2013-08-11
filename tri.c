@@ -275,6 +275,17 @@ static void setup(void) {
 	//adc_init();
 	sei();
 
+	if (((uint32_t *) (CONFIG_END - sizeof(config)))[CFG_MAGIC] ==
+			config[CFG_MAGIC]) {
+		/* There's a valid config block at the end of the flash,
+		 * try to load it into RAM variables.  */
+		memcpy(config, (uint32_t *) (CONFIG_END - sizeof(config)),
+				sizeof(config));
+		for (i = CFG_MAGIC + 1; i < __CFG_END; i ++)
+			serial_write_hex32(config[i]);
+		serial_write_str("\r\nOld cfg loaded\r\n");
+	}
+
 	rx_no_signal = 10;
 
 	/* Wait for someone to attach to UART */
@@ -315,17 +326,6 @@ static void setup(void) {
 	actuators_hwpwm_start();
 
 	serial_write_str("Ok\r\n");
-
-	if (((uint32_t *) (FLASH_END - sizeof(config)))[CFG_MAGIC] ==
-			config[CFG_MAGIC]) {
-		/* There's a valid config block at the end of the flash,
-		 * try to load it into RAM variables.  */
-		memcpy(config, (uint32_t *) (FLASH_END - sizeof(config)),
-				sizeof(config));
-		for (i = CFG_MAGIC + 1; i < __CFG_END; i ++)
-			serial_write_hex32(config[i]);
-		serial_write_str("\r\nOld cfg loaded\r\n");
-	}
 
 	yaw_deadband_pos = rx_co_right;
 	roll_deadband_pos = rx_cy_right;
