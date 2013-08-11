@@ -1088,11 +1088,12 @@ static void serial_write_bin32(uint32_t v) {
 int fps = 0;////
 static void status_update(void) {
 	static uint8_t cnt = 0;
+	static uint16_t vbat = 0; /* In millivolts */
 	if (ahrs_report) {
 #ifdef TEXT_DEBUG
 		serial_write_fp32((int) altitude - home_altitude, 100);
 		serial_write_fp32(home_altitude, 100);
-		if (cnt >= 10) {
+		if (cnt >= 4) {
 			static uint32_t rpm_ts = 0;
 			uint32_t timediff;
 			cnt = 0;
@@ -1130,15 +1131,15 @@ static void status_update(void) {
 		serial_write2(q[1]);
 		serial_write2(q[2]);
 		serial_write2(q[3]);
-		serial_write2(mag[0]);
-		serial_write2(mag[1]);
-		serial_write2(mag[2]);
+		serial_write2(mag[0] / 0x1000);
+		serial_write2(mag[1] / 0x1000);
+		serial_write2(mag[2] / 0x1000);
 		/* TODO: accumulate acc[]s between reports? */
-		serial_write1((uint8_t) (int8_t) (acc[0] * 64.0f));
-		serial_write1((uint8_t) (int8_t) (acc[1] * 64.0f));
-		serial_write1((uint8_t) (int8_t) (acc[2] * 64.0f));
+		serial_write1((uint8_t) (int8_t) (acc[0] / 8.0f));
+		serial_write1((uint8_t) (int8_t) (acc[1] / 8.0f));
+		serial_write1((uint8_t) (int8_t) (acc[2] / 8.0f));
 		serial_write_bin16(timer_read_hi());
-		//serial_write1(actuators[0] >> 7);
+		serial_write1(rx_co_throttle);
 #endif
 	}
 #if 0
@@ -1189,12 +1190,18 @@ static void status_update(void) {
 	serial_write_bin16(altitude / 10);
 	serial_write1((int8_t) (z_speed / 100));
 	serial_write1(0x81); /* FLAGS */
-	serial_write1(modes);
+	serial_write1(((modes >> MODE_MOTORS_ARMED) & 1) |
+			((!!acc_valid) << 1) |
+			((!!mag_valid) << 2) |
+			((rx_no_signal > 2) << 3));
+	serial_write1(0x82); /* STATUS */
+	serial_write_bin16(vbat);
+	serial_write1(rx_co_throttle);
 	serial_write1(0x83); /* ATTITUDE */
 	/* Pitch & Yaw reversed (config) */
-	serial_write1((uint16_t) ahrs_roll >> 8);
-	serial_write1((uint16_t) -ahrs_pitch >> 8);
-	serial_write1((uint16_t) (ahrs_yaw - 0x4000) >> 8);
+	serial_write_bin16((int16_t) ahrs_roll);
+	serial_write_bin16((int16_t) -ahrs_pitch);
+	serial_write1((uint16_t) ahrs_yaw >> 8);
 
 	switch (cnt & 3) {
 	case 0 ... 2:
@@ -1212,13 +1219,13 @@ static void status_update(void) {
 			serial_write1(cnt & 3);
 			serial_write_bin16(rpm);
 		}
+		break;
 	case 3:
-		serial_write1(0x82); /* STATUS */
 		/* 2.56V reference voltage, 47k resistor to GND and
 		 * 470k to VBAT, 16-bit max resolution */
-		serial_write_bin16((actuator_serial_get_vbat(1) * 263 * 100) /
-				((0x10000 * 100 * 47) / (47 + 470) / 10));
-		serial_write1(rx_co_throttle);
+		vbat = (actuator_serial_get_vbat(1) * 263 * 100) /
+			((0x10000 * 100 * 47) / (47 + 470) / 10);
+		break;
 	}
 #endif
 	cnt ++;
