@@ -24,6 +24,7 @@ extern VOL int16_t ahrs_yaw,
 extern VOL int16_t accel_acceleration[3];
 extern VOL float mag[3];
 extern VOL float acc[3], avgalen, timediff;
+extern VOL uint8_t mag_valid, acc_valid;
 
 /* The quaternion */
 extern VOL float q[4];

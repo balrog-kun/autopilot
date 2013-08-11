@@ -34,6 +34,7 @@ VOL int16_t ahrs_pitch_rate, ahrs_roll_rate, ahrs_yaw_rate;
 VOL float q[4];
 VOL float mag[3], acc[3], avgalen, timediff;
 VOL float q0q0, q0q1, q0q2, q0q3, q1q1, q1q2, q1q3, q2q2, q2q3;
+VOL uint8_t mag_valid = 0, acc_valid = 0;
 
 /* TODO: investigae if we should do what MatrixPilot does: boost Kp by:
  * 1x        if gyro rate < 50deg/sec
