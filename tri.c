@@ -48,7 +48,7 @@ static const int REVERSE_MASK;
 #include "bmp085.h"
 #include "ahrs.h"
 //#include "gps.h"
-//#include "adc.h"
+#include "adc.h"
 #include "config.h"
 
 /* The modes are a set of boolean switches that can be set or reset/cleared
@@ -351,7 +351,7 @@ static void setup(void) {
 	serial_set_handler(handle_input);
 	rx_init();
 	//gps_init();
-	//adc_init();
+	adc_init();
 	sei();
 
 	if (((uint32_t *) (CONFIG_END - sizeof(config)))[CFG_MAGIC] ==
