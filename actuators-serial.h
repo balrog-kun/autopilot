@@ -319,7 +319,7 @@ static inline void actuator_serial_set(uint8_t target, uint16_t value) {
 	}
 
 	act_raw_write(target, (value >> 3) |
-			((REVERSE_MASK << target) & 0x2000));
+			(((REVERSE_MASK >> 2) << target) & 0x2000));
 	actuators_serial[target] = value;
 }
 
