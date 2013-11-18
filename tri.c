@@ -30,16 +30,7 @@
   roll_rate - back
   yaw_rate - left
  */
-
-#define LEFT_MOTOR	0
-#define RIGHT_MOTOR	1
-#define RUDDER_MOTOR	2
-#define RUDDER_SERVO	0
-
-#define REVERSE_MASK	\
-	((0 << (13 - RUDDER_MOTOR)) |	\
-	 (1 << (13 - RIGHT_MOTOR)) |	\
-	 (1 << (13 - LEFT_MOTOR)))
+static const int REVERSE_MASK;
 
 #include <stdint.h>
 #include "LPC13xx.h"		/* LPC13xx Peripheral Registers */
@@ -58,6 +49,81 @@
 //#include "gps.h"
 //#include "adc.h"
 #include "config.h"
+
+/* The modes are a set of boolean switches that can be set or reset/cleared
+ * using the "gear switch" on the transmitter.  Every move of the switch
+ * changes the mode pointed at by the potentiometer which is on the
+ * right side of the transmitter.
+ */
+enum modes_e {
+	/* Arm/disarm the motors (dangerous!) */
+	MODE_MOTORS_ARMED,
+	/* Hold the geographic heading/bearing */
+	MODE_HEADINGHOLD_ENABLE,
+	/* Perhaps start gliding maintaining constant speed and orientation,
+	 * and then, sense the altitude using a proximity sensor and try
+	 * to brake and land */
+	MODE_SOMETHING,
+	/* Or RTL? rename MODE_RTL? */
+	MODE_EMERGENCY,
+	/* Adaptively change motor output differences and servo outputs,
+	 * don't use absolute values.  Only works when HOLD enabled.  */
+	MODE_ADAPTIVE_ENABLE,
+	/* Cut the PPM signal off for a while so that the engine makes the
+	 * "welcome" noise once the signal is restarted.  This is in case
+	 * we emergency land far away and need some audio hints to find
+	 * the vehicle.  It's not very loud though.  */
+	MODE_PPM_STOP,
+	/* Attempt to minimise rotation rates automatically */
+	MODE_HOLD_ENABLE,
+	/* Attempt to also maintain level pitch */
+	MODE_PITCHLEVEL_ENABLE,
+	/* Attempt to maintain level roll */
+	MODE_ROLLLEVEL_ENABLE,
+	/* Attempt to hold altitude */
+	MODE_ALTHOLD_ENABLE,
+};
+static uint32_t modes =
+	(0 << MODE_MOTORS_ARMED) |
+	(0 << MODE_HEADINGHOLD_ENABLE) |
+	(0 << MODE_SOMETHING) |
+	(0 << MODE_EMERGENCY) |
+	(1 << MODE_ADAPTIVE_ENABLE) |
+	(0 << MODE_PPM_STOP) |
+	(1 << MODE_HOLD_ENABLE) |
+	(1 << MODE_PITCHLEVEL_ENABLE) |
+	(1 << MODE_ROLLLEVEL_ENABLE) |
+	(0 << MODE_ALTHOLD_ENABLE);
+#define SET_ONLY 0
+
+static uint8_t yaw_deadband_pos = 0x80;
+static uint8_t roll_deadband_pos = 0x80;
+static uint8_t pitch_deadband_pos = 0x80;
+static uint8_t throttle_deadband_pos = 0x80;
+
+static uint16_t output[4];
+
+static void config_update(int co_right, int cy_right, int cy_front);
+static void update_osc_periods(int32_t x, int32_t y);
+static void serial_write2(float v);
+static void serial_write_bin16(uint16_t v);
+
+/* TODO: around the time of take-off measure the throttle
+ * needed to hover and set something just slightly lower on emergency */
+#define hover_thr 0x80
+
+#define CLAMP(x, mi, ma)	\
+	if (x < mi)		\
+		x = mi;		\
+	if (x > ma)		\
+		x = ma;
+#define CLAMPS(x, y, mi, ma)	\
+	if (x < mi)		\
+		y = mi;		\
+	if (x > ma)		\
+		y = ma;
+
+#include "config-tri.h"
 
 int abs(int);
 void *memcpy(void *, void *, int);
@@ -84,11 +150,6 @@ static void handle_input(char ch) {
 		/* TODO: receive six bytes describing rx and set no_signal=0 */
 	}
 }
-
-static uint8_t yaw_deadband_pos = 0x80;
-static uint8_t roll_deadband_pos = 0x80;
-static uint8_t pitch_deadband_pos = 0x80;
-static uint8_t throttle_deadband_pos = 0x80;
 
 uint32_t config[16] = {
 	/* Increment on ver change */
@@ -277,9 +338,8 @@ static void setup(void) {
 	/* Initialise everything we need */
 	serial_init();
 	timer_init();
-	actuators_hwpwm_init(1);
-	actuators_serial_init(3);
 	twi_init();
+	actuators_setup();
 	serial_set_handler(handle_input);
 	rx_init();
 	//gps_init();
@@ -329,12 +389,7 @@ static void setup(void) {
 	my_delay(200);
 	ahrs_init();
 
-	actuator_serial_set(RUDDER_MOTOR, 0);
-	actuator_serial_set(LEFT_MOTOR, 0);
-	actuator_serial_set(RIGHT_MOTOR, 0);
-	actuators_serial_start();
-	actuator_hwpwm_set(RUDDER_SERVO, 0x8000);
-	actuators_hwpwm_start();
+	actuators_start();
 
 	serial_write_str("Ok\r\n");
 
@@ -343,52 +398,6 @@ static void setup(void) {
 	pitch_deadband_pos = rx_cy_front;
 	prev_sw = rx_gear_sw;
 }
-
-/* The modes are a set of boolean switches that can be set or reset/cleared
- * using the "gear switch" on the transmitter.  Every move of the switch
- * changes the mode pointed at by the potentiometer which is on the
- * right side of the transmitter.
- */
-enum modes_e {
-	/* Arm/disarm the motors (dangerous!) */
-	MODE_MOTORS_ARMED,
-	/* Hold the geographic heading/bearing */
-	MODE_HEADINGHOLD_ENABLE,
-	/* Perhaps start gliding maintaining constant speed and orientation,
-	 * and then, sense the altitude using a proximity sensor and try
-	 * to brake and land */
-	MODE_SOMETHING,
-	/* Or RTL? rename MODE_RTL? */
-	MODE_EMERGENCY,
-	/* Adaptively change motor output differences and servo outputs,
-	 * don't use absolute values.  Only works when HOLD enabled.  */
-	MODE_ADAPTIVE_ENABLE,
-	/* Cut the PPM signal off for a while so that the engine makes the
-	 * "welcome" noise once the signal is restarted.  This is in case
-	 * we emergency land far away and need some audio hints to find
-	 * the vehicle.  It's not very loud though.  */
-	MODE_PPM_STOP,
-	/* Attempt to minimise rotation rates automatically */
-	MODE_HOLD_ENABLE,
-	/* Attempt to also maintain level pitch */
-	MODE_PITCHLEVEL_ENABLE,
-	/* Attempt to maintain level roll */
-	MODE_ROLLLEVEL_ENABLE,
-	/* Attempt to hold altitude */
-	MODE_ALTHOLD_ENABLE,
-};
-static uint32_t modes =
-	(0 << MODE_MOTORS_ARMED) |
-	(0 << MODE_HEADINGHOLD_ENABLE) |
-	(0 << MODE_SOMETHING) |
-	(0 << MODE_EMERGENCY) |
-	(1 << MODE_ADAPTIVE_ENABLE) |
-	(0 << MODE_PPM_STOP) |
-	(1 << MODE_HOLD_ENABLE) |
-	(1 << MODE_PITCHLEVEL_ENABLE) |
-	(1 << MODE_ROLLLEVEL_ENABLE) |
-	(0 << MODE_ALTHOLD_ENABLE);
-#define SET_ONLY 0
 
 static void modes_update(void) {
 	int num;
@@ -698,11 +707,9 @@ static void update_osc_periods(int32_t x, int32_t y) {
 	}
 }
 
-static uint16_t output[4];
 static void control_update(void) {
 	int32_t cur_pitch, cur_roll, cur_yaw;
 	int32_t dest_pitch, dest_roll, dest_yaw;
-	int32_t ldiff, rdiff, bdiff, ydiff;
 
 	int32_t cur_x, cur_y, cur_z;
 
@@ -711,9 +718,9 @@ static void control_update(void) {
 		cy_front = rx_cy_front, co_throttle = rx_co_throttle;
 	/* sti(); */
 
-	int32_t throttle_left, throttle_right, throttle_rear, rudder;
-	int prev_armed = 0;
+#if 0
 	int prev_althold = 0;
+#endif
 
 	co_throttle -= 10;
 	if (co_throttle < 0)
@@ -757,10 +764,6 @@ static void control_update(void) {
 			cy_front += 3;
 	} else
 		pitch_deadband_pos = cy_front;
-
-	/* TODO: around the time of take-off measure the throttle
-	 * needed to hover and set something just slightly lower on emergency */
-#define hover_thr 0x80
 
 #if 1
 	if (co_throttle > hover_thr && !(modes & (1 << MODE_MOTORS_ARMED))) {
@@ -835,17 +838,6 @@ static void control_update(void) {
 	} else
 		prev_althold = 0;
 #endif
-
-#define CLAMP(x, mi, ma)	\
-	if (x < mi)		\
-		x = mi;		\
-	if (x > ma)		\
-		x = ma;
-#define CLAMPS(x, y, mi, ma)	\
-	if (x < mi)		\
-		y = mi;		\
-	if (x > ma)		\
-		y = ma;
 
 	/* Apply a poor man's Expo */
 #define EXPO(x, op, n)	\
@@ -990,105 +982,7 @@ static void control_update(void) {
 		dest_yaw = dest_yaw - cur_yaw;
 	}
 
-	/* 7 / 8 is about 3 / 2 / sqrt(3) which is 1 / arm length for pitch. */
-	ldiff = -dest_pitch * 7 / 8 + dest_roll; // + dest_yaw * 0.001
-	rdiff = -dest_pitch * 7 / 8 - dest_roll; // - dest_yaw * 0.001
-	bdiff = dest_pitch * 7 / 8; // + (abs(dest_yaw) >> 6);
-	ydiff = dest_yaw;
-	{ /* HACK filter */
-		//// convert this to YAW_D?
-		static int32_t ydiffr = 0;
-		ydiffr += ydiff - ydiffr / 16;////
-		ydiff = ydiffr / 16;
-	}
-#define RUDDER_NEUTRAL 0x6c00 /* Wild guess */
-
-	if (modes & (1 << MODE_ADAPTIVE_ENABLE)) { /* Adapt coefficients */
-		/* TODO: Maintan also a slow (longer term) average, then use
-		 * quick - slow = a and slow = b in
-		 * y = a * x + b
-		 * Note that this needs to be _simple_ */
-#define quick_avg(i) ((int32_t) config[CFG_ADAPTIVE_0 + i])
-#define quick_avg_raw(i) config[CFG_ADAPTIVE_0 + i]
-
-		if (co_throttle > hover_thr) { /* Adapt coefficients */
-			int32_t sum;
-
-			quick_avg_raw(0) += ldiff / 16;
-			quick_avg_raw(1) += rdiff / 16;
-			quick_avg_raw(2) += bdiff / 16;
-			quick_avg_raw(3) += ydiff / 16;
-
-			/* Balance the three motor throttles around zero */
-			sum = (quick_avg(0) + quick_avg(1) + quick_avg(2)) / 4;
-			quick_avg_raw(0) -= sum;
-			quick_avg_raw(1) -= sum;
-			quick_avg_raw(2) -= sum;
-#define CO 2
-#define HALFCO (1 << (CO - 1))
-			CLAMPS(quick_avg(0), quick_avg_raw(0),
-					-0x3000l << CO, 0x3000l << CO);
-			CLAMPS(quick_avg(1), quick_avg_raw(1),
-					-0x3000l << CO, 0x3000l << CO);
-			CLAMPS(quick_avg(2), quick_avg_raw(2),
-					-0x3000l << CO, 0x3000l << CO);
-			CLAMPS(quick_avg(3), quick_avg_raw(3),
-					-0x5000l << CO, 0x5000l << CO);
-		}
-
-		ldiff += (quick_avg(0) + HALFCO) >> CO;
-		rdiff += (quick_avg(1) + HALFCO) >> CO;
-		bdiff += (quick_avg(2) + HALFCO) >> CO;
-		ydiff += (quick_avg(3) + HALFCO) >> CO;
-	}
-//	/* Calculate expected rudder val to add to bdiff */
-//	rudder = RUDDER_NEUTRAL - ydiff;
-//	CLAMP(rudder, 0, 0xffff);
-//	bdiff += abs(rudder - RUDDER_NEUTRAL) >> 9;
-
-	CLAMP(ldiff, -0x6fff, 0x6fff);
-	CLAMP(rdiff, -0x6fff, 0x6fff);
-	CLAMP(bdiff, -0x6fff, 0x6fff);
-	if (co_throttle < 50) {
-		throttle_left = ((uint32_t) co_throttle *
-				(uint16_t) (0x8000 + ldiff)) >> 8;
-		throttle_right = ((uint32_t) co_throttle *
-				(uint16_t) (0x8000 + rdiff)) >> 8;
-		throttle_rear = ((uint32_t) co_throttle *
-				(uint16_t) (0x8000 + bdiff)) >> 8;
-	} else {
-		throttle_left = ((uint32_t) co_throttle * 0x8000 +
-				200 * ldiff) >> 8;
-		throttle_right = ((uint32_t) co_throttle * 0x8000 +
-				200 * rdiff) >> 8;
-		throttle_rear = ((uint32_t) co_throttle * 0x8000 +
-				200 * bdiff) >> 8;
-	}
-	rudder = RUDDER_NEUTRAL + ydiff;
-
-	CLAMP(throttle_left, 0, 0xb000);
-	CLAMP(throttle_right, 0, 0xb000);
-	CLAMP(throttle_rear, 0, 0xb000);
-	CLAMP(rudder, 0, 0xffff);
-
-	if (modes & (1 << MODE_MOTORS_ARMED)) {
-		actuator_serial_set(LEFT_MOTOR, (uint16_t) throttle_left);
-		actuator_serial_set(RIGHT_MOTOR, (uint16_t) throttle_right);
-		actuator_serial_set(RUDDER_MOTOR, (uint16_t) throttle_rear);
-		prev_armed = 1;
-	} else if (prev_armed) {
-		actuator_serial_set(LEFT_MOTOR, 0x0000);
-		actuator_serial_set(RIGHT_MOTOR, 0x0000);
-		actuator_serial_set(RUDDER_MOTOR, 0x0000);
-		prev_armed = 0;
-	}
-
-	actuator_hwpwm_set(RUDDER_SERVO, (uint16_t) rudder);
-
-	output[0] = (uint16_t) throttle_left;
-	output[1] = (uint16_t) throttle_right;
-	output[2] = (uint16_t) throttle_rear;
-	output[3] = (uint16_t) rudder;
+	model_control_update(dest_pitch, dest_roll, dest_yaw, co_throttle);
 }
 
 //#define TEXT_DEBUG
@@ -1116,13 +1010,14 @@ static void serial_write_bin32(uint32_t v) {
 
 int fps = 0;////
 static void status_update(void) {
-	static uint8_t cnt = 0;
 	static uint16_t vbat = 0; /* In millivolts */
 	if (ahrs_report) {
+		static uint8_t cnt = 0;
 #ifdef TEXT_DEBUG
 		serial_write_fp32((int) altitude - home_altitude, 100);
 		serial_write_fp32(home_altitude, 100);
 		if (cnt >= 4) {
+#if 0
 			static uint32_t rpm_ts = 0;
 			uint32_t timediff;
 			cnt = 0;
@@ -1137,23 +1032,26 @@ static void status_update(void) {
 			 * 470k to VBAT, 16-bit max resolution */
 			serial_write_fp32(actuator_serial_get_vbat(1) * 263,
 					(0x10000 * 100 * 47) / (47 + 470));
+#endif
 		}
-		serial_write_hex16(fps);////
-		serial_write_hex32(timer_read());////
+//		serial_write_hex16(fps);////
+//		serial_write_hex32(timer_read());////
+//		serial_write_fp32(tmpzacc * 100.0f, 100);///
+		/*
 		int16_t cur_x = (q1q3 - q0q2) * 4096.0f;
 		int16_t cur_y = (q2q3 + q0q1) * 4096.0f;
 		int16_t cur_z = (1.0f - q1q1 - q2q2) * 4096.0f;
 		serial_write_fp32(cur_x, 16);
 		serial_write_fp32(cur_y, 16);
 		serial_write_fp32(cur_z, 16);
-		/*
+		*
 		serial_write_fp32(ahrs_pitch_rate, 64);
 		serial_write_fp32(ahrs_roll_rate, 64);
 		serial_write_fp32(ahrs_yaw_rate, 64);
 		*/
 		serial_write_str("\r\n");
 #else
-		if (rx_no_signal > 3)
+		if (rx_no_signal > 10)
 			serial_write1(0xe2); /* ID */
 		serial_write1(0xe0); /* ID */
 		serial_write2(q[0]);
@@ -1170,6 +1068,7 @@ static void status_update(void) {
 		serial_write_bin16(timer_read_hi());
 		serial_write1(rx_co_throttle);
 #endif
+		cnt ++;
 	}
 #if 0
 	if (gps_report) {
@@ -1232,32 +1131,8 @@ static void status_update(void) {
 	serial_write_bin16((int16_t) -ahrs_pitch);
 	serial_write1((uint16_t) ahrs_yaw >> 8);
 
-	switch (cnt & 3) {
-	case 0 ... 2:
-		{
-			static uint32_t rpm_ts[3] = { 0, 0, 0 };
-			uint32_t timediff, rpm;
-
-			timediff = timer_read() - rpm_ts[cnt & 3];
-			rpm = (uint32_t) actuator_serial_get_rpm(cnt & 3) *
-				(F_CPU * 60 * 2 / POLES / 1000) /
-				(timediff / 1000);
-			rpm_ts[cnt & 3] += timediff;
-
-			serial_write1(0x84); /* ESCDATA */
-			serial_write1(cnt & 3);
-			serial_write_bin16(rpm);
-		}
-		break;
-	case 3:
-		/* 2.56V reference voltage, 47k resistor to GND and
-		 * 470k to VBAT, 16-bit max resolution */
-		vbat = (actuator_serial_get_vbat(1) * 263 * 100) /
-			((0x10000 * 100 * 47) / (47 + 470) / 10);
-		break;
-	}
+	osd_motor_update(&vbat);
 #endif
-	cnt ++;
 }
 
 static uint32_t ts = 0;
@@ -1267,6 +1142,11 @@ static void loop(void) {
 	fps ++;////
 
 	/* No set udpate rate, go as fast as possible */
+	/*
+	 * The synchronous UART & I2C operations are our real actual delays,
+	 * it's a FIXME.  UART ops are in status_update, I2C in {ahrs,baro,
+	 * status}_update.
+	 */
 #if 0
 	my_delay(10); /*  10ms - 100Hz update rate */
 #endif
