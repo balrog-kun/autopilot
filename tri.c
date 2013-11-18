@@ -124,7 +124,8 @@ static void serial_write_bin16(uint16_t v);
 	if (x > ma)		\
 		y = ma;
 
-#include "config-tri.h"
+//#include "config-tri.h"
+#include "config-quad.h"
 
 int abs(int);
 void *memcpy(void *, void *, int);
@@ -166,14 +167,20 @@ uint32_t config[16] = {
 	 * true "up".
 	 * Components are in 1 / 4096 units.
 	 */
-	[CFG_NEUTRAL_X] = -90, /* 90 to the right */
-	[CFG_NEUTRAL_Y] = -180, /* 180 to the front */
+	[CFG_NEUTRAL_X] = 400, /* 400 to the left */
+	[CFG_NEUTRAL_Y] = -100, /* 100 to the front */
 
 	[CFG_ROLLPITCH_P] = 3 * 32,
-	[CFG_ROLLPITCH_D] = 5 * 32 / 5,
+	[CFG_ROLLPITCH_D] = 3 * 32 / 5,
 
 	[CFG_YAW_P] = 10 * 32,
 	[CFG_YAW_D] = 0,
+
+	/////
+	//(gdb) print (float []) (unsigned int [3]) { 0xc29b2632, 0x433b43a6, 0xc2989959 }
+	[CFG_MAG_CALIB_X] = 0xc29b2632, /* -77.5746002f */
+	[CFG_MAG_CALIB_Y] = 0x433b43a6, /* 187.264252f */
+	[CFG_MAG_CALIB_Z] = 0xc2989959, /* -76.2995071f */
 };
 
 #define FLASH_END 0x8000

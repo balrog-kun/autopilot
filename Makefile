@@ -94,7 +94,7 @@ $(TARGET).elf : $(ARM_OBJ) $(CRT0) $(BOOTLOADER) $(APP_ADDITIONAL) Makefile
 $(ARM_OBJ) : %.o : %.c $(LDSCRIPT) Makefile
 	$(CC) -c $(CFLAGS) $< -o $@
 
-tri.c: uart.h timer1.h rx.h actuators-hwpwm.h actuators-serial.h actuators-i2c.h twi.h l3g4200d.h adxl345.h hmc5883l.h bmp085.h ahrs.h config.h config-tri.h
+tri.c: uart.h timer1.h rx.h actuators-hwpwm.h actuators-serial.h actuators-i2c.h twi.h l3g4200d.h adxl345.h hmc5883l.h bmp085.h ahrs.h config.h config-tri.h config-quad.h
 uart.c: uart.h timer1.h
 timer1.c: timer1.h
 ahrs-ekf-float.c: uart.h timer1.h twi.h cmps09.h wmp.h l3g4200d.h adxl345.h hmc5883l.h ahrs.h
