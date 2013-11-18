@@ -62,7 +62,7 @@ ARM_SRC= \
   startup/$(CPU).c \
   uart.c \
   timer1.c \
-  rx.c \
+  rx-rmilec.c \
   actuators.c \
   twi.c
 
@@ -99,6 +99,7 @@ uart.c: uart.h timer1.h
 timer1.c: timer1.h
 ahrs-ekf-float.c: uart.h timer1.h twi.h cmps09.h wmp.h l3g4200d.h adxl345.h hmc5883l.h ahrs.h
 rx.c: timer1.h
+rx-rmilec.c: timer1.h
 rx-test.c: uart.h timer1.h
 
 version:
