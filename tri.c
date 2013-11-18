@@ -255,10 +255,15 @@ static void config_update(int co_right, int cy_right, int cy_front) {
 		break;
 	}
 
+#ifdef RUDDER_SERVO
+# define DEBUG_SERVO RUDDER_SERVO
 	/* Confirm the operation by wiggling the servo */
-	actuator_hwpwm_set(RUDDER_SERVO, (uint16_t) 0x9000);
+	actuator_hwpwm_set(DEBUG_SERVO, (uint16_t) 0x9000);
 	my_delay(200);
-	actuator_hwpwm_set(RUDDER_SERVO, (uint16_t) 0x8000);
+	actuator_hwpwm_set(DEBUG_SERVO, (uint16_t) 0x8000);
+#else
+	my_delay(200);
+#endif
 }
 
 static void setup(void) {
