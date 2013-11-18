@@ -12,7 +12,7 @@
 # define NULL 0
 #endif
 
-#define TX_INTERRUPT	0	/* 0 if TX uses polling, 1 interrupt driven. */
+#define TX_INTERRUPT	1	/* 0 if TX uses polling, 1 interrupt driven. */
 
 #define IER_RBR		0x01
 #define IER_THRE	0x02
@@ -33,13 +33,7 @@
 #define LSR_TEMT	0x40
 #define LSR_RXFE	0x80
 
-static volatile uint8_t uarttxempty = 1;
-
 static void uartinit(uint32_t baudrate, uint8_t rtscts) {
-	uint32_t reg;
-
-	uarttxempty = 1;
-
 	/* IO configuration */
 	if (rtscts) {
 		LPC_IOCON->PIO0_7 = 0x01;	/* UART CTS */
@@ -69,21 +63,21 @@ static void uartinit(uint32_t baudrate, uint8_t rtscts) {
 	LPC_UART->FCR = 0x07;		/* Enable and reset TX and RX FIFO. */
 
 	/* Read to clear the line status. */
-	reg = LPC_UART->LSR;
+	/* not needed reg = LPC_UART->LSR; */
 
-	///* Ensure a clean start, no data in either TX or RX FIFO. */
-	//while ((LPC_UART->LSR & (LSR_THRE | LSR_TEMT)) !=
-	//		(LSR_THRE | LSR_TEMT));
-	//while (LPC_UART->LSR & LSR_RDR)
-	//	reg = LPC_UART->RBR;	/* Dump data from RX FIFO */
+	/* Ensure a clean start, no data in either TX or RX FIFO. */
+	while ((LPC_UART->LSR & (LSR_THRE | LSR_TEMT)) !=
+			(LSR_THRE | LSR_TEMT));
+	while (LPC_UART->LSR & LSR_RDR)
+		(void) LPC_UART->RBR;	/* Dump data from RX FIFO */
 
 	/* Enable the UART Interrupts */
 	NVIC_EnableIRQ(UART_IRQn);
 	/* Unmask */
 #if TX_INTERRUPT
-	LPC_UART->IER = IER_RBR | IER_THRE;// | IER_RLS;
+	LPC_UART->IER = IER_RBR | IER_THRE;
 #else
-	LPC_UART->IER = IER_RBR;/// | IER_RLS;
+	LPC_UART->IER = IER_RBR;
 #endif
 }
 
@@ -91,9 +85,27 @@ void serial_init(void) {
 	uartinit(115200, 0);
 }
 
+#if TX_INTERRUPT
+#define TX_LEN 64
+uint8_t tx_buf[TX_LEN], tx_start = 0, tx_end = 0;
+static void serial_tx_run(void) {
+	while ((LPC_UART->LSR & LSR_THRE) && tx_start != tx_end)
+		LPC_UART->THR = tx_buf[tx_start ++ & (TX_LEN - 1)];
+}
+#endif
+
 void serial_write1(char ch) {
+#if TX_INTERRUPT
+	cli(); /* In case LSR changes after the check (FIXME: save flags) */
+	if (tx_start == tx_end && (LPC_UART->LSR & LSR_THRE))
+		LPC_UART->THR = ch;
+	else
+		tx_buf[tx_end ++ & (TX_LEN - 1)] = ch;
+	sei();
+#else
 	while (!(LPC_UART->LSR & LSR_THRE));
 	LPC_UART->THR = ch;
+#endif
 }
 
 static const char to_hex[16] = {
@@ -233,13 +245,7 @@ void uart_isr(void) {
 			ch_handler(ch);
 #if TX_INTERRUPT
 	} else if (iir == IIR_THRE) {	/* Transmit holding register empty */
-		/* THRE interrupt */
-		lsr = LPC_UART->LSR;	/* Check status in the LSR to see if
-					   valid data in U0THR or not */
-		if (LSRValue & LSR_THRE)
-			uarttxempty = 1;
-		else
-			uarttxempty = 0;
+		serial_tx_run();
 #endif
 	}
 }
