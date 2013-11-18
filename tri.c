@@ -788,9 +788,9 @@ static void control_update(void) {
 		cy_right = 0x80;
 
 		/* Pull the cyclic stick back to exit RTL / Loiter */
-		if (rx_no_signal < 5)/// && cy_front < 0x80 - 30)
+		if (rx_no_signal < 10)/// && cy_front < 0x80 - 30)
 			modes &= ~(1 << MODE_EMERGENCY);
-	} else if (unlikely(rx_no_signal > 15)) {
+	} else if (unlikely(rx_no_signal > 20)) {
 		co_right = 0x80;
 		cy_front = 0x80;
 		cy_right = 0x80;
