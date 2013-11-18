@@ -34,7 +34,7 @@ VOL int16_t ahrs_pitch_rate, ahrs_roll_rate, ahrs_yaw_rate;
 VOL float q[4];
 VOL float mag[3], acc[3], avgalen, timediff;
 VOL float q0q0, q0q1, q0q2, q0q3, q1q1, q1q2, q1q3, q2q2, q2q3;
-VOL uint8_t mag_valid = 0, acc_valid = 0;
+VOL uint8_t mag_valid = 1, acc_valid = 0;
 
 /* TODO: investigae if we should do what MatrixPilot does: boost Kp by:
  * 1x        if gyro rate < 50deg/sec
@@ -477,6 +477,14 @@ static void vectors_update(void) {
 
 	/* Compute feedback only if accelerometer measurement valid
 	 * (avoids NaN in accelerometer normalisation), say: 0.75 - 1.25g
+	 *
+	 * TODO: Also possibly ignore the accelerometer if we're spinning
+	 * (based on the gyro data) because it's going to be detecting the
+	 * centrifugal force whenever the accelerometer is not mounted
+	 * right in the center of gravity.  On the other hand that force
+	 * may be relatively small.  We might be able to actually estimate
+	 * the position of the accelerometer relative to the CoG based on
+	 * the correlation with gyro data.
 	 */
 	acc_valid = (len > 0.60f / 0.0039f && len < 2.0f / 0.0039f);
 	if (acc_valid) {
@@ -576,7 +584,7 @@ static void vectors_update(void) {
 	grav[2] = 1 - q1q1 - q2q2;
 
 	ahrs_yaw = (uint16_t) (int) (atan2f(q1q2 - q0q3,
-			q0q0 + q1q1 - 1) * (32768 / (float) M_PI));
+			q0q0 + q1q1 - 1) * (32768 / (float) M_PI)) ^ 0x8000;
 	ahrs_pitch = (uint16_t) (int) (atanf(grav[0] / sqrtf(grav[1] * grav[1] +
 				grav[2] * grav[2])) * (32768 / (float) M_PI));
 	ahrs_roll = (uint16_t) (int) (atanf(grav[1] / sqrtf(grav[0] * grav[0] +
