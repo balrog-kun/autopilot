@@ -1014,8 +1014,10 @@ static void serial_write_bin32(uint32_t v) {
 #endif
 #endif
 
-#define POLES 14
+static uint32_t rssi_avg;
+static uint16_t rssi_cnt = 0;
 
+#define POLES 14
 int fps = 0;////
 static void status_update(void) {
 	static uint16_t vbat = 0; /* In millivolts */
@@ -1096,7 +1098,7 @@ static void status_update(void) {
 
 	if (rx_report) {
 #ifdef TEXT_DEBUG
-		/*
+#if 0
 		serial_write_hex16(rx_ch[0]);
 		serial_write_hex16(rx_ch[1]);
 		serial_write_hex16(rx_ch[2]);
@@ -1105,7 +1107,7 @@ static void status_update(void) {
 		serial_write_hex16(rx_ch[5]);
 		serial_write_hex16(rx_ch[6]);
 		serial_write_hex16(rx_ch[7]);
-		*/
+#else
 		serial_write_dec8(rx_gear_sw);
 		serial_write_dec8(rx_id_sw);
 		serial_write_dec8(rx_co_throttle);
@@ -1116,6 +1118,9 @@ static void status_update(void) {
 		serial_write_hex16(output[1]);
 		serial_write_hex16(output[2]);
 		serial_write_hex16(output[3]);
+		/* 3.3V reference and 0 - 3.3V range */
+		serial_write_fp32(rssi_avg * 33, 1024 * 10 * rssi_cnt);
+#endif
 		serial_write_str("\r\n");
 #else
 #endif
@@ -1133,6 +1138,7 @@ static void status_update(void) {
 	serial_write1(0x82); /* STATUS */
 	serial_write_bin16(vbat);
 	serial_write1(rx_co_throttle);
+	serial_write1(rssi_avg * 255 / ((rssi_cnt ?: 1) * 1023)); /* 3.3/3.3 */
 	serial_write1(0x83); /* ATTITUDE */
 	/* Pitch & Yaw reversed (config) */
 	serial_write_bin16((int16_t) ahrs_roll);
@@ -1171,9 +1177,14 @@ static void loop(void) {
 	altitude_update();
 	control_update();
 
+	/* Average rssi readings */
+	rssi_cnt ++;
+	rssi_avg += adc_convert(7);
+
 	if (counter50hz > 5) { /* About every 0.1s */
 		counter50hz = 0;
 		status_update();
+		rssi_avg = rssi_cnt = 0;
 	}
 
 	if (((modes >> MODE_PPM_STOP) & 1) != stopped) {
